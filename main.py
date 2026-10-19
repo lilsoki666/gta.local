@@ -1,5 +1,4 @@
-
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 import math
 import random
@@ -7,104 +6,104 @@ import random
 from kivy.app import App
 from kivy.clock import Clock
 from kivy.core.window import Window
-from kivy.graphics import Color, Triangle, Line, Ellipse, Rectangle
+from kivy.graphics import Color, Triangle, Rectangle, Ellipse
+from kivy.metrics import dp
 from kivy.uix.widget import Widget
 from kivy.uix.label import Label
-from kivy.uix.floatlayout import FloatLayout
 from kivy.uix.button import Button
-from kivy.metrics import dp
+from kivy.uix.floatlayout import FloatLayout
 
 
-# ------------------------------------------
-# KOTA NUSANTARA 3D - PROTOTYPE 0.1
-# ------------------------------------------
+# ============================================================
+# KOTA NUSANTARA 3D - PROTOTYPE 0.2
+# Lightweight procedural pseudo-3D prototype using Kivy canvas.
+# This is not a full 3D engine; see README for known limitations.
+# ============================================================
 
 WORLD_SEED = 17
 random.seed(WORLD_SEED)
 
 ROAD_HALF = 4.0
-BUILDING_ROWS = 7
-ROW_GAP = 9.0
-FOCAL_LENGTH = 430.0
+FOCAL_LENGTH = 470.0
+VIEW_DISTANCE = 48.0
+CAMERA_DISTANCE = 6.0
+CAMERA_HEIGHT = 2.8
+CAMERA_SENSITIVITY = 0.0015
+JOYSTICK_RADIUS = dp(42)
+JOYSTICK_DEADZONE = 0.12
 
 
 class World3D(Widget):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
+        # Player world coordinates. World Y is the road direction.
         self.px = 0.0
         self.py = 0.0
-        self.yaw = 0.0
+        self.player_yaw = 0.0
+
+        # Camera orbit is independent from player facing.
+        self.camera_yaw = 0.0
+        self.camera_pitch = 0.16
 
         self.move_x = 0.0
         self.move_y = 0.0
         self.sprinting = False
 
-        self.camera_yaw = 0.0
-        self.camera_pitch = 0.20
-
         self.left_touch = None
         self.right_touch = None
+        self.joy_center = (0.0, 0.0)
+        self.joy_pos = (0.0, 0.0)
         self.last_right_x = 0.0
-        self.joy_center = (0, 0)
-        self.joy_pos = (0, 0)
 
         self.objects = []
         self.make_city()
-
-        Clock.schedule_interval(self.update, 1 / 30)
+        Clock.schedule_interval(self.update, 1.0 / 30.0)
 
     def make_city(self):
         self.objects.clear()
 
-        # Rumah toko dan rumah warga di kedua sisi jalan.
-        colors = [
-            (0.80, 0.62, 0.40),
-            (0.78, 0.76, 0.65),
-            (0.72, 0.42, 0.30),
-            (0.48, 0.66, 0.55),
-            (0.85, 0.76, 0.50),
+        building_colors = [
+            (0.78, 0.59, 0.39),
+            (0.78, 0.75, 0.63),
+            (0.68, 0.38, 0.29),
+            (0.43, 0.61, 0.51),
+            (0.83, 0.73, 0.49),
+            (0.62, 0.68, 0.68),
         ]
 
-        for row in range(-BUILDING_ROWS, BUILDING_ROWS + 1):
-            y = row * ROW_GAP
-
-            if abs(y) < 1:
+        # Buildings are positioned outside the sidewalks.
+        for row in range(-12, 13):
+            y = row * 8.0
+            if abs(y) < 5.0:
                 continue
 
             for side in (-1, 1):
-                x = side * random.uniform(6.0, 8.5)
-                w = random.uniform(2.5, 3.5)
-                d = random.uniform(3.0, 5.0)
-                h = random.uniform(3.0, 6.0)
-                color = random.choice(colors)
+                x = side * random.uniform(7.1, 9.2)
+                w = random.uniform(2.3, 3.3)
+                d = random.uniform(2.8, 4.3)
+                h = random.uniform(2.8, 5.3)
+                color = random.choice(building_colors)
 
+                self.add_box(x, y, 0, w, d, h, color, "building")
+
+                roof_color = tuple(max(0.05, c * 0.68) for c in color)
                 self.add_box(
-                    x, y, 0, w, d, h, color, "building"
+                    x, y, h, w + 0.12, d + 0.12,
+                    0.16, roof_color, "roof"
                 )
 
-                # Atap sederhana.
-                roof = (
-                    min(color[0] * 0.68, 1),
-                    min(color[1] * 0.68, 1),
-                    min(color[2] * 0.68, 1),
-                )
-                self.add_box(
-                    x, y, h, w + 0.15, d + 0.15,
-                    0.18, roof, "roof"
-                )
-
-            # Pohon tropis.
+            # Trees between buildings and sidewalk.
             for side in (-1, 1):
-                tx = side * random.uniform(4.6, 5.5)
-                ty = y + random.uniform(-2.5, 2.5)
+                tx = side * random.uniform(5.2, 6.0)
+                ty = y + random.uniform(-2.0, 2.0)
                 self.add_box(
-                    tx, ty, 0, 0.22, 0.22, 1.5,
-                    (0.38, 0.22, 0.10), "tree"
+                    tx, ty, 0, 0.22, 0.22, 1.35,
+                    (0.34, 0.20, 0.10), "trunk"
                 )
                 self.add_box(
-                    tx, ty, 1.25, 1.0, 1.0, 1.4,
-                    (0.15, 0.46, 0.20), "leaf"
+                    tx, ty, 1.2, 1.15, 1.15, 1.35,
+                    (0.12, 0.39, 0.17), "leaf"
                 )
 
     def add_box(self, x, y, z, w, d, h, color, kind):
@@ -117,220 +116,198 @@ class World3D(Widget):
     def update(self, dt):
         dt = min(dt, 0.05)
 
-        # Joystick: bergerak relatif terhadap arah kamera.
-        speed = 5.5 if not self.sprinting else 8.0
+        # Movement follows camera heading, not the player's previous heading.
+        heading = self.camera_yaw
+        speed = 8.0 if self.sprinting else 4.8
+
         forward = self.move_y
         strafe = self.move_x
 
-        angle = self.yaw
-        dx = (
-            math.sin(angle) * forward
-            + math.cos(angle) * strafe
-        )
-        dy = (
-            math.cos(angle) * forward
-            - math.sin(angle) * strafe
-        )
+        dx = math.sin(heading) * forward + math.cos(heading) * strafe
+        dy = math.cos(heading) * forward - math.sin(heading) * strafe
 
-        length = math.sqrt(dx * dx + dy * dy)
-        if length > 1:
-            dx /= length
-            dy /= length
+        magnitude = math.hypot(dx, dy)
+        if magnitude > 1.0:
+            dx /= magnitude
+            dy /= magnitude
 
-        nx = self.px + dx * speed * dt
-        ny = self.py + dy * speed * dt
+        if magnitude > JOYSTICK_DEADZONE:
+            nx = self.px + dx * speed * dt
+            ny = self.py + dy * speed * dt
 
-        # Tabrakan sederhana dengan bangunan.
-        if abs(nx) < 4.0:
-            self.px = nx
-        if self.clear_position(nx, ny):
-            self.px = nx
-            self.py = ny
-        elif self.clear_position(self.px, ny):
-            self.py = ny
+            # Separate-axis movement allows sliding along walls.
+            if self.clear_position(nx, self.py):
+                self.px = nx
+            if self.clear_position(self.px, ny):
+                self.py = ny
 
-        if length > 0.12:
-            self.yaw = math.atan2(dx, dy)
+            # Character faces movement direction.
+            self.player_yaw = math.atan2(dx, dy)
 
         self.draw_world()
 
     def clear_position(self, x, y):
+        # Keep player on the street/sidewalk zone and out of buildings.
+        if abs(x) > 5.15:
+            return False
+
         for obj in self.objects:
             if obj["kind"] != "building":
                 continue
-
             if (
-                abs(x - obj["x"]) < obj["w"] / 2 + 0.45
-                and abs(y - obj["y"]) < obj["d"] / 2 + 0.45
+                abs(x - obj["x"]) < obj["w"] / 2 + 0.40
+                and abs(y - obj["y"]) < obj["d"] / 2 + 0.40
             ):
                 return False
-
         return True
 
-    def project(self, x, y, z):
-        # Kamera mengikuti pemain dari belakang.
-        cyaw = self.yaw + self.camera_yaw
+    @property
+    def center_x(self):
+        return self.x + self.width * 0.5
 
-        cam_x = self.px - math.sin(cyaw) * 6.5
-        cam_y = self.py - math.cos(cyaw) * 6.5
-        cam_z = 3.0
+    @property
+    def center_y(self):
+        return self.y + self.height * 0.46
+
+    def project(self, x, y, z):
+        # Orbit camera follows the player while remaining independent of facing.
+        angle = self.camera_yaw
+        cam_x = self.px - math.sin(angle) * CAMERA_DISTANCE
+        cam_y = self.py - math.cos(angle) * CAMERA_DISTANCE
+        cam_z = CAMERA_HEIGHT
 
         dx = x - cam_x
         dy = y - cam_y
         dz = z - cam_z
 
-        right_x = math.cos(cyaw)
-        right_y = -math.sin(cyaw)
+        right_x = math.cos(angle)
+        right_y = -math.sin(angle)
+        camera_x = dx * right_x + dy * right_y
+        forward = dx * math.sin(angle) + dy * math.cos(angle)
 
-        cx = dx * right_x + dy * right_y
-        forward = dx * math.sin(cyaw) + dy * math.cos(cyaw)
-
-        pitch = 0.28
+        pitch = self.camera_pitch
         depth = forward * math.cos(pitch) - dz * math.sin(pitch)
         vertical = forward * math.sin(pitch) + dz * math.cos(pitch)
 
-        if depth < 0.35:
+        if depth <= 0.25:
             return None
 
         scale = FOCAL_LENGTH / depth
-        sx = self.center_x + cx * scale
+        sx = self.center_x + camera_x * scale
         sy = self.center_y - vertical * scale
+
+        # Ignore objects far outside the screen to reduce drawing load.
+        if sx < self.x - self.width or sx > self.right + self.width:
+            return None
+        if sy < self.y - self.height or sy > self.top + self.height:
+            return None
 
         return (sx, sy, depth)
 
-    @property
-    def center_x(self):
-        return self.x + self.width / 2
-
-    @property
-    def center_y(self):
-        return self.y + self.height * 0.53
-
-    def draw_triangle(self, points, color):
-        projected = [
-            self.project(*p) for p in points
-        ]
-        if any(p is None for p in projected):
+    def draw_face(self, vertices, color):
+        projected = [self.project(*vertex) for vertex in vertices]
+        if any(point is None for point in projected):
             return
 
-        pts = []
-        for p in projected:
-            pts.extend([p[0], p[1]])
-
+        # Use two triangles. Kivy canvas has no 3D depth buffer here.
         Color(*color)
-        Triangle(points=pts)
+        Triangle(points=[
+            projected[0][0], projected[0][1],
+            projected[1][0], projected[1][1],
+            projected[2][0], projected[2][1],
+        ])
+        Triangle(points=[
+            projected[0][0], projected[0][1],
+            projected[2][0], projected[2][1],
+            projected[3][0], projected[3][1],
+        ])
 
-    def draw_face(self, vertices, color, depth):
-        # Permukaan segiempat dibagi menjadi dua segitiga.
-        self.draw_triangle(
-            [vertices[0], vertices[1], vertices[2]], color
-        )
-        self.draw_triangle(
-            [vertices[0], vertices[2], vertices[3]], color
-        )
-
-    def box_faces(self, o):
-        x, y, z = o["x"], o["y"], o["z"]
-        w, d, h = o["w"], o["d"], o["h"]
+    def box_faces(self, obj):
+        x, y, z = obj["x"], obj["y"], obj["z"]
+        w, d, h = obj["w"], obj["d"], obj["h"]
 
         x1, x2 = x - w / 2, x + w / 2
         y1, y2 = y - d / 2, y + d / 2
         z1, z2 = z, z + h
 
-        c = o["color"]
+        c = obj["color"]
+        side_a = tuple(max(0.0, v * 0.70) for v in c)
+        side_b = tuple(max(0.0, v * 0.84) for v in c)
 
-        # Warna berbeda per sisi untuk efek low-poly.
-        side_a = tuple(v * 0.72 for v in c)
-        side_b = tuple(v * 0.86 for v in c)
-
+        # Front, side and top faces.
         return [
-            ([(x1,y1,z1),(x2,y1,z1),(x2,y1,z2),(x1,y1,z2)], side_a),
-            ([(x2,y1,z1),(x2,y2,z1),(x2,y2,z2),(x2,y1,z2)], side_b),
-            ([(x1,y1,z2),(x2,y1,z2),(x2,y2,z2),(x1,y2,z2)], c),
+            ([(x1, y1, z1), (x2, y1, z1),
+              (x2, y1, z2), (x1, y1, z2)], side_a),
+            ([(x2, y1, z1), (x2, y2, z1),
+              (x2, y2, z2), (x2, y1, z2)], side_b),
+            ([(x1, y1, z2), (x2, y1, z2),
+              (x2, y2, z2), (x1, y2, z2)], c),
         ]
 
     def draw_world(self):
         self.canvas.clear()
 
         with self.canvas:
-            # Langit dan tanah.
-            Color(0.47, 0.72, 0.89)
-            Rectangle(
-                pos=self.pos,
-                size=(self.width, self.height)
-            )
+            # Sky background.
+            Color(0.46, 0.72, 0.88)
+            Rectangle(pos=self.pos, size=self.size)
 
-            Color(0.30, 0.53, 0.29)
-            Rectangle(
-                pos=(self.x, self.y),
-                size=(self.width, self.height * 0.43)
-            )
-
-            # Jalan digambar sebagai bidang perspektif.
-            road = [
-                (-ROAD_HALF, self.py - 15, 0.02),
-                ( ROAD_HALF, self.py - 15, 0.02),
-                ( ROAD_HALF, self.py + 70, 0.02),
-                (-ROAD_HALF, self.py + 70, 0.02),
+            # World ground plane, projected in the same coordinate system
+            # as the road and buildings.
+            ground = [
+                (-65, self.py - 18, -0.03),
+                (65, self.py - 18, -0.03),
+                (65, self.py + 75, -0.03),
+                (-65, self.py + 75, -0.03),
             ]
-            self.draw_face(road, (0.22, 0.23, 0.24), 0)
+            self.draw_face(ground, (0.28, 0.48, 0.27))
 
-            # Trotoar.
+            # Road and sidewalks sit just above ground level.
+            road = [
+                (-ROAD_HALF, self.py - 18, 0.01),
+                (ROAD_HALF, self.py - 18, 0.01),
+                (ROAD_HALF, self.py + 75, 0.01),
+                (-ROAD_HALF, self.py + 75, 0.01),
+            ]
+            self.draw_face(road, (0.20, 0.22, 0.23))
+
             for side in (-1, 1):
                 sidewalk = [
-                    (side * 4, self.py - 15, 0.04),
-                    (side * 5, self.py - 15, 0.04),
-                    (side * 5, self.py + 70, 0.04),
-                    (side * 4, self.py + 70, 0.04),
+                    (side * 4.0, self.py - 18, 0.025),
+                    (side * 5.0, self.py - 18, 0.025),
+                    (side * 5.0, self.py + 75, 0.025),
+                    (side * 4.0, self.py + 75, 0.025),
                 ]
-                self.draw_face(
-                    sidewalk, (0.62, 0.60, 0.52), 0
-                )
+                self.draw_face(sidewalk, (0.61, 0.59, 0.51))
 
-            # Marka jalan.
-            for y in range(
-                int(self.py) - 10,
-                int(self.py) + 70,
-                5
-            ):
-                mark = [
-                    (-0.07, y, 0.06),
-                    (0.07, y, 0.06),
-                    (0.07, y + 2, 0.06),
-                    (-0.07, y + 2, 0.06),
+            # Dashed center line.
+            for mark_y in range(int(self.py) - 15, int(self.py) + 75, 6):
+                marking = [
+                    (-0.07, mark_y, 0.05),
+                    (0.07, mark_y, 0.05),
+                    (0.07, mark_y + 2.5, 0.05),
+                    (-0.07, mark_y + 2.5, 0.05),
                 ]
-                self.draw_face(mark, (0.94, 0.88, 0.60), 0)
+                self.draw_face(marking, (0.93, 0.84, 0.54))
 
-            # Objek jauh digambar sebelum objek dekat.
+            # Approximate far-to-near painter's order.
             visible = []
             for obj in self.objects:
-                dist = math.hypot(
+                distance = math.hypot(
                     obj["x"] - self.px,
                     obj["y"] - self.py
                 )
-                if dist < 42:
-                    visible.append((dist, obj))
-
-            visible.sort(reverse=True, key=lambda item: item[0])
+                if distance <= VIEW_DISTANCE:
+                    visible.append((distance, obj))
+            visible.sort(key=lambda pair: pair[0], reverse=True)
 
             for _, obj in visible:
-                for verts, col in self.box_faces(obj):
-                    self.draw_face(verts, col, 0)
+                for vertices, color in self.box_faces(obj):
+                    self.draw_face(vertices, color)
 
-            # Karakter sederhana berbentuk badan dan kepala.
-            x, y = self.px, self.py
-            self.draw_triangle(
-                [
-                    (x - 0.30, y, 0.05),
-                    (x + 0.30, y, 0.05),
-                    (x, y + 0.10, 0.05),
-                ],
-                (0.10, 0.10, 0.10)
-            )
+            self.draw_player()
 
-            self.add_character_box(x, y)
-
-            # HUD joystick.
+            # On-screen joystick base and knob.
             if self.left_touch is not None:
                 jx, jy = self.joy_center
             else:
@@ -343,37 +320,35 @@ class World3D(Widget):
             )
 
             kx, ky = self.joy_pos
-            Color(1, 1, 1, 0.50)
+            if self.left_touch is None:
+                kx, ky = jx, jy
+
+            Color(1, 1, 1, 0.48)
             Ellipse(
-                pos=(kx - dp(17), ky - dp(17)),
-                size=(dp(34), dp(34))
+                pos=(kx - dp(16), ky - dp(16)),
+                size=(dp(32), dp(32))
             )
 
-    def add_character_box(self, x, y):
-        # Karakter low-poly terdiri dari beberapa bentuk sederhana.
-        self.draw_triangle(
+    def draw_player(self):
+        x, y = self.px, self.py
+
+        # Simplified body made from projected polygons.
+        self.draw_face(
             [
-                (x - 0.23, y + 0.10, 0.20),
-                (x + 0.23, y + 0.10, 0.20),
-                (x + 0.20, y + 0.10, 1.05),
+                (x - 0.25, y, 0.12),
+                (x + 0.25, y, 0.12),
+                (x + 0.20, y, 0.98),
+                (x - 0.20, y, 0.98),
             ],
-            (0.12, 0.34, 0.66)
-        )
-        self.draw_triangle(
-            [
-                (x - 0.23, y + 0.10, 0.20),
-                (x + 0.20, y + 0.10, 1.05),
-                (x - 0.20, y + 0.10, 1.05),
-            ],
-            (0.18, 0.44, 0.80)
+            (0.12, 0.34, 0.72)
         )
 
-        # Kepala.
-        self.draw_triangle(
+        self.draw_face(
             [
-                (x - 0.17, y + 0.10, 1.05),
-                (x + 0.17, y + 0.10, 1.05),
-                (x, y + 0.10, 1.38),
+                (x - 0.16, y, 0.98),
+                (x + 0.16, y, 0.98),
+                (x + 0.13, y, 1.30),
+                (x - 0.13, y, 1.30),
             ],
             (0.72, 0.48, 0.31)
         )
@@ -382,51 +357,51 @@ class World3D(Widget):
         if not self.collide_point(*touch.pos):
             return super().on_touch_down(touch)
 
-        if touch.x < self.x + self.width * 0.45:
+        # Left side: joystick. Right side: camera orbit.
+        if touch.x < self.x + self.width * 0.43:
             self.left_touch = touch
             self.joy_center = touch.pos
             self.joy_pos = touch.pos
             touch.grab(self)
-            return True
+        else:
+            self.right_touch = touch
+            self.last_right_x = touch.x
+            touch.grab(self)
 
-        self.right_touch = touch
-        self.last_right_x = touch.x
-        touch.grab(self)
         return True
 
-    
-def on_touch_move(self, touch):
-    if touch.grab_current is not self:
-        return super().on_touch_move(touch)
+    def on_touch_move(self, touch):
+        if touch.grab_current is not self:
+            return super().on_touch_move(touch)
 
-    if touch is self.left_touch:
-        cx, cy = self.joy_center
-        dx = (touch.x - cx) / dp(42)
-        dy = (touch.y - cy) / dp(42)
+        if touch is self.left_touch:
+            cx, cy = self.joy_center
+            dx = (touch.x - cx) / JOYSTICK_RADIUS
+            dy = (touch.y - cy) / JOYSTICK_RADIUS
 
-        length = math.hypot(dx, dy)
-        if length > 1:
-            dx /= length
-            dy /= length
+            length = math.hypot(dx, dy)
+            if length > 1.0:
+                dx /= length
+                dy /= length
 
-        self.move_x = dx
-        self.move_y = dy
-        self.joy_pos = (
-            cx + dx * dp(28),
-            cy + dy * dp(28)
-        )
+            # Dead zone avoids tiny unintended movement.
+            if math.hypot(dx, dy) < JOYSTICK_DEADZONE:
+                dx, dy = 0.0, 0.0
 
-    elif touch is self.right_touch:
-        delta = touch.x - self.last_right_x
+            self.move_x = dx
+            self.move_y = dy
+            self.joy_pos = (
+                cx + dx * dp(28),
+                cy + dy * dp(28)
+            )
 
-        # Kamera jauh lebih halus.
-        delta = max(-40, min(40, delta))
-        self.camera_yaw -= delta * 0.0015
+        elif touch is self.right_touch:
+            delta_x = touch.x - self.last_right_x
+            delta_x = max(-40.0, min(40.0, delta_x))
+            self.camera_yaw -= delta_x * CAMERA_SENSITIVITY
+            self.last_right_x = touch.x
 
-        self.last_right_x = touch.x
-
-    return True
-
+        return True
 
     def on_touch_up(self, touch):
         if touch.grab_current is self:
@@ -434,8 +409,8 @@ def on_touch_move(self, touch):
 
         if touch is self.left_touch:
             self.left_touch = None
-            self.move_x = 0
-            self.move_y = 0
+            self.move_x = 0.0
+            self.move_y = 0.0
 
         if touch is self.right_touch:
             self.right_touch = None
@@ -446,43 +421,49 @@ def on_touch_move(self, touch):
 class NusantaraApp(App):
     def build(self):
         Window.size = (960, 540)
-
         root = FloatLayout()
+
         self.world = World3D(size_hint=(1, 1))
         root.add_widget(self.world)
 
         title = Label(
-            text="[b]KOTA NUSANTARA[/b]  [size=12]PROTOTYPE 0.1[/size]",
+            text="[b]KOTA NUSANTARA[/b]  [size=12]PROTOTYPE 0.2[/size]",
             markup=True,
             size_hint=(None, None),
-            size=(dp(260), dp(40)),
-            pos_hint={"x": 0.02, "top": 0.98},
+            size=(dp(280), dp(42)),
+            pos_hint={"x": 0.025, "top": 0.98},
             halign="left",
+            valign="middle",
         )
+        title.bind(size=lambda instance, value: setattr(
+            instance, "text_size", value
+        ))
         root.add_widget(title)
 
         self.status = Label(
-            text="JALAN: 0 km/jam",
+            text="KECEPATAN: 0 km/jam",
             size_hint=(None, None),
-            size=(dp(190), dp(35)),
+            size=(dp(210), dp(38)),
             pos_hint={"right": 0.98, "top": 0.98},
+            halign="right",
+            valign="middle",
         )
+        self.status.bind(size=lambda instance, value: setattr(
+            instance, "text_size", value
+        ))
         root.add_widget(self.status)
 
         sprint = Button(
             text="LARI",
             size_hint=(None, None),
-            size=(dp(78), dp(58)),
+            size=(dp(82), dp(58)),
             pos_hint={"right": 0.96, "y": 0.12},
-            background_color=(0.10, 0.45, 0.85, 0.90),
+            background_normal="",
+            background_color=(0.07, 0.25, 0.40, 0.92),
         )
         sprint.bind(
-            on_press=lambda *_: setattr(
-                self.world, "sprinting", True
-            ),
-            on_release=lambda *_: setattr(
-                self.world, "sprinting", False
-            ),
+            on_press=lambda *_: setattr(self.world, "sprinting", True),
+            on_release=lambda *_: setattr(self.world, "sprinting", False),
         )
         root.add_widget(sprint)
 
@@ -491,9 +472,9 @@ class NusantaraApp(App):
 
     def update_hud(self, dt):
         w = self.world
-        speed = math.hypot(w.move_x, w.move_y)
-        speed *= 8.0 if w.sprinting else 5.5
-        self.status.text = f"JALAN: {int(speed * 3.6)} km/jam"
+        input_strength = min(1.0, math.hypot(w.move_x, w.move_y))
+        speed = (8.0 if w.sprinting else 4.8) * input_strength
+        self.status.text = f"KECEPATAN: {int(speed * 3.6)} km/jam"
 
 
 if __name__ == "__main__":
