@@ -394,33 +394,39 @@ class World3D(Widget):
         touch.grab(self)
         return True
 
-    def on_touch_move(self, touch):
-        if touch.grab_current is not self:
-            return super().on_touch_move(touch)
+    
+def on_touch_move(self, touch):
+    if touch.grab_current is not self:
+        return super().on_touch_move(touch)
 
-        if touch is self.left_touch:
-            cx, cy = self.joy_center
-            dx = (touch.x - cx) / dp(42)
-            dy = (touch.y - cy) / dp(42)
+    if touch is self.left_touch:
+        cx, cy = self.joy_center
+        dx = (touch.x - cx) / dp(42)
+        dy = (touch.y - cy) / dp(42)
 
-            length = math.hypot(dx, dy)
-            if length > 1:
-                dx /= length
-                dy /= length
+        length = math.hypot(dx, dy)
+        if length > 1:
+            dx /= length
+            dy /= length
 
-            self.move_x = dx
-            self.move_y = dy
-            self.joy_pos = (
-                cx + dx * dp(28),
-                cy + dy * dp(28)
-            )
+        self.move_x = dx
+        self.move_y = dy
+        self.joy_pos = (
+            cx + dx * dp(28),
+            cy + dy * dp(28)
+        )
 
-        elif touch is self.right_touch:
-            delta = touch.x - self.last_right_x
-            self.yaw -= delta * 0.006
-            self.last_right_x = touch.x
+    elif touch is self.right_touch:
+        delta = touch.x - self.last_right_x
 
-        return True
+        # Kamera jauh lebih halus.
+        delta = max(-40, min(40, delta))
+        self.camera_yaw -= delta * 0.0015
+
+        self.last_right_x = touch.x
+
+    return True
+
 
     def on_touch_up(self, touch):
         if touch.grab_current is self:
