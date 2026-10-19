@@ -11,6 +11,7 @@ source.include_exts = py,kv,png,jpg,atlas,json,txt
 version = 0.1.0
 
 requirements = python3,kivy==2.3.1
+android.accept_sdk_license = True
 
 orientation = landscape
 fullscreen = 1
