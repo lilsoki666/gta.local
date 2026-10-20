@@ -1,33 +1,29 @@
-# Kota Nusantara 3D — Starter Project
+# Kota Nusantara 3D — Prototype 0.4 (Kivy)
 
-Paket starter 3D berbasis **Godot 4.x** yang memindahkan kebutuhan visual Prototype 0.4 ke renderer 3D sungguhan. Paket ini bukan salinan aset GTA; model kota awal dibuat dari mesh sederhana di dalam proyek, supaya langsung terbuka tanpa unduhan aset tambahan.
+Proyek ini tetap menggunakan Python + Kivy + Buildozer. Tidak menggunakan Godot.
 
-## Isi paket
-- Kota demo: persimpangan, marka jalan, trotoar, bangunan, pohon, dan satu mobil.
-- Karakter 3D sederhana, kamera third-person mengikuti pemain.
-- HUD HP/uang, minimap bulat, joystick sentuh, tombol aksi bulat untuk senjata, lompat, tembak, sprint, dan mode kendaraan.
-- File model OBJ contoh di `assets/models/` yang dapat diganti dengan model eksternal.
-- `docs/ASSET_SOURCES.md`: sumber aset 3D CC0 dan lisensinya.
-
-## Membuka proyek
-1. Instal Godot 4.x di PC/laptop atau gunakan Godot Android Editor jika perangkat mendukungnya.
-2. Ekstrak ZIP.
-3. Buka folder `Kota_Nusantara_3D_Starter` sebagai proyek Godot (pilih `project.godot`).
-4. Tekan Play / F6 untuk menjalankan scene utama.
-
-## Android
-Atur Android export templates dan Android SDK/JDK di Godot, lalu gunakan **Project → Export → Android**. Gunakan renderer Compatibility (sudah disetel) untuk target perangkat Android yang lebih luas. Pengaturan SDK dan proses signing masih perlu disesuaikan di mesin build milik Anda.
+## Perubahan 0.4
+- Memperbaiki kontrol joystick sentuh kiri agar mengubah arah gerak.
+- Menambahkan kontrol kamera sentuh di sisi kanan (geser horizontal untuk putar kamera, vertikal untuk mengatur sudut).
+- Menambahkan detail fasad ruko berupa bidang jendela dan papan nama berwarna.
+- Menambahkan tiang lampu dan lampu jalan di sepanjang jalan.
+- Memperluas sedikit area gerak agar pemain dapat mendekati objek tepi jalan.
+- Tombol AKSI menampilkan respons saat pemain dekat objek area kota.
+- Menyesuaikan label versi dan nama artifact build.
 
 ## Kontrol
-- Sentuh dan geser joystick kiri untuk berjalan.
-- Tombol ↑ untuk lompat.
-- ⚡ untuk sprint.
-- ● untuk aksi tembak prototipe.
-- CAR mengubah label ke mode kendaraan prototipe.
-- Di keyboard: Space = lompat, Shift = sprint.
+- Joystick kiri: bergerak.
+- Geser sisi kanan layar: putar kamera dan ubah sudut pandang.
+- LARI: tekan dan tahan.
+- LOMPAT: tekan.
+- SENJATA: proyektil arcade sederhana.
+- AKSI: pesan interaksi area kota.
 
-## Batas prototipe yang perlu diketahui
-- Ini paket dasar yang bisa dibuka dan dikembangkan, belum game open-world siap rilis.
-- Tombol kendaraan saat ini menandai mode; sistem masuk/keluar mobil, steering, traffic AI, NPC, senjata fisik, misi, save game, dan peta minimap dinamis belum diimplementasikan.
-- Model karakter/kendaraan/bangunan di paket adalah mesh awal sederhana, bukan model semi-realistis bertekstur PBR.
-- Jangan menganggap paket CC0 eksternal sudah berada di proyek. Sumber yang disarankan ada di `docs/ASSET_SOURCES.md`; unduh dari halaman resmi, periksa lisensi/format dan impor modelnya.
+## Build APK melalui GitHub
+1. Commit isi proyek ke branch `main`.
+2. Buka tab **Actions**.
+3. Pilih **Build Kota Nusantara 3D APK**, lalu tekan **Run workflow**.
+4. Setelah selesai, unduh artifact `kota-nusantara-3d-v04-debug`.
+
+## Batasan yang masih ada
+Ini adalah prototipe perspektif 3D berbasis poligon Kivy, bukan engine 3D dengan depth buffer. Detail ruko, lampu, dan pohon masih dibentuk dari poligon/box; belum menggunakan model 3D PBR, tekstur gambar, kendaraan yang dapat dikendarai, atau NPC dengan AI. Arsip ZIP yang diberikan untuk revisi ini tidak memuat file gambar aset di folder `assets/`, jadi tidak ada tekstur eksternal yang dapat dipakai tanpa menambahkannya terlebih dahulu.

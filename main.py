@@ -1,4 +1,3 @@
-
 __version__ = "0.4.0"
 
 import math
@@ -7,886 +6,508 @@ import random
 from kivy.app import App
 from kivy.clock import Clock
 from kivy.core.window import Window
-from kivy.graphics import Color, Rectangle, Ellipse, Triangle, Line
+from kivy.graphics import Color, Triangle, Rectangle, Ellipse, Line
 from kivy.metrics import dp
 from kivy.uix.widget import Widget
-from kivy.uix.floatlayout import FloatLayout
 from kivy.uix.label import Label
 from kivy.uix.button import Button
-from kivy.uix.popup import Popup
-from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.floatlayout import FloatLayout
 
 
-FOCAL = 570.0
-ROAD = 4.1
+# Kota Nusantara 3D prototype 0.4
+# Lightweight polygon-based 3D projection using Kivy canvas.
+# This is a 3D-style prototype, not a hardware-accelerated 3D engine.
+
+ROAD_HALF = 4.0
+FOCAL_LENGTH = 520.0
+VIEW_DISTANCE = 55.0
+CAMERA_DISTANCE = 6.0
+CAMERA_HEIGHT = 2.7
+CAMERA_SENSITIVITY = 0.0015
+JOYSTICK_RADIUS = dp(42)
+JOYSTICK_DEADZONE = 0.12
 
 
-class World(Widget):
+class World3D(Widget):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-
         self.px = 0.0
         self.py = 0.0
-        self.yaw = 0.0
         self.player_yaw = 0.0
+        self.camera_yaw = 0.0
+        self.camera_pitch = 0.17
 
-        self.mx = 0.0
-        self.my = 0.0
-        self.run = False
+        self.move_x = 0.0
+        self.move_y = 0.0
+        self.sprinting = False
 
-        self.joy_id = None
-        self.look_id = None
-        self.joy_origin = (0, 0)
-        self.joy_knob = (0, 0)
-        self.look_last = None
+        self.jump_time = 0.0
+        self.jump_duration = 0.72
+        self.jump_height = 1.45
+        self.is_jumping = False
 
-        self.jump = False
-        self.jump_t = 0.0
+        self.left_touch = None
+        self.right_touch = None
+        self.joy_center = (0.0, 0.0)
+        self.joy_pos = (0.0, 0.0)
+        self.last_right_x = 0.0
 
-        self.drive = False
-        self.car_heading = 0.0
-        self.car_speed = 0.0
-        self.steer = 0
+        self.projectiles = []
+        self.shot_flash = 0.0
+        self.action_message = ""
+        self.message_time = 0.0
 
-        self.health = 100
-        self.money = 2500
-
-        self.weapon = 0
-        self.weapons = ["PISTOL", "SMG", "SHOTGUN"]
-        self.ammo = [48, 120, 24]
-
-        self.shots = []
-        self.toast = ""
-        self.toast_t = 0.0
-
-        self.objs = []
+        self.objects = []
         self.make_city()
-
-        Clock.schedule_interval(self.tick, 1 / 30)
-
-    @property
-    def cx(self):
-        return self.x + self.width / 2
-
-    @property
-    def cy(self):
-        return self.y + self.height * 0.47
-
-    def box(self, x, y, z, w, d, h, c, kind):
-        self.objs.append({
-            "x": x, "y": y, "z": z,
-            "w": w, "d": d, "h": h,
-            "c": c, "k": kind
-        })
+        Clock.schedule_interval(self.update, 1.0 / 30.0)
 
     def make_city(self):
-        random.seed(44)
-
-        palette = [
-            (0.72, 0.62, 0.46),
-            (0.73, 0.72, 0.61),
-            (0.66, 0.39, 0.30),
-            (0.48, 0.61, 0.52),
-            (0.78, 0.70, 0.48),
-            (0.54, 0.62, 0.64),
-            (0.78, 0.75, 0.67),
+        random.seed(17)
+        self.objects.clear()
+        colors = [
+            (0.78, 0.59, 0.39), (0.78, 0.75, 0.63),
+            (0.68, 0.38, 0.29), (0.43, 0.61, 0.51),
+            (0.83, 0.73, 0.49), (0.62, 0.68, 0.68),
+            (0.77, 0.77, 0.70)
         ]
 
-        for i in range(-18, 55):
-            y = i * 8.5 + 4
-
+        # Low-poly Indonesian shop houses on both sides of the road.
+        for row in range(-14, 25):
+            y = row * 8.0 + 4.0
             for side in (-1, 1):
-                x = side * random.uniform(7.5, 10.2)
+                x = side * random.uniform(7.8, 10.2)
                 w = random.uniform(2.6, 3.8)
-                d = random.uniform(3.5, 4.8)
-                h = random.uniform(3.0, 5.7)
-                c = random.choice(palette)
+                d = random.uniform(3.2, 4.6)
+                h = random.uniform(3.0, 5.8)
+                color = random.choice(colors)
+                self.add_box(x, y, 0, w, d, h, color, "building")
+                # Flat roof and simple dark doorway.
+                roof = tuple(max(0.04, c * 0.68) for c in color)
+                self.add_box(x, y, h, w + 0.12, d + 0.12, 0.18, roof, "roof")
+                self.add_box(x, y - d / 2 - 0.015, 0, 0.62, 0.035,
+                             min(1.8, h * 0.55), (0.19, 0.16, 0.13), "door")
 
-                self.box(x, y, 0, w, d, h, c, "building")
-
-                roof = tuple(v * 0.65 for v in c)
-                self.box(
-                    x, y, h, w + 0.12, d + 0.12,
-                    0.16, roof, "roof"
-                )
-
-                fy = y - side * (d / 2 + 0.03)
-
-                self.box(
-                    x, fy, 0.05, 0.58, 0.05,
-                    1.5, (0.18, 0.13, 0.10), "door"
-                )
-
-                for wx in (-0.72, 0.72):
-                    self.box(
-                        x + wx, fy, 1.75,
-                        0.48, 0.05, 0.55,
-                        (0.24, 0.48, 0.58), "window"
-                    )
-
+            # Trees between sidewalk and houses.
             for side in (-1, 1):
-                tx = side * random.uniform(5.25, 6.0)
-                ty = y + random.uniform(-2, 2)
+                tx = side * random.uniform(5.35, 6.15)
+                ty = y + random.uniform(-2.2, 2.2)
+                self.add_box(tx, ty, 0, 0.25, 0.25, 1.55,
+                             (0.35, 0.21, 0.11), "trunk")
+                # Faceted, chunky canopy approximation.
+                self.add_box(tx, ty, 1.25, 1.35, 1.35, 1.45,
+                             random.choice([(0.12, 0.39, 0.17),
+                                            (0.15, 0.44, 0.20),
+                                            (0.18, 0.35, 0.13)]), "leaf")
 
-                self.box(
-                    tx, ty, 0, 0.22, 0.22, 1.6,
-                    (0.32, 0.19, 0.10), "trunk"
+            # Shopfront details: awnings, window bands, and signboards.
+            for side in (-1, 1):
+                bx = side * 8.8
+                # Align details to the nearest building row on the street-facing side.
+                building = min(
+                    (o for o in self.objects if o["kind"] == "building"),
+                    key=lambda o: abs(o["y"] - y) + abs(o["x"] - bx),
+                    default=None
                 )
+                if building:
+                    front_y = building["y"] - building["d"] / 2 - 0.055
+                    facade_w = building["w"]
+                    facade_h = building["h"]
+                    # Window strip and a colorful Indonesian shop sign.
+                    self.add_box(building["x"], front_y, min(2.25, facade_h * 0.58),
+                                 facade_w * 0.72, 0.045, 0.82,
+                                 (0.22, 0.43, 0.52), "window")
+                    self.add_box(building["x"], front_y - 0.035, min(2.0, facade_h * 0.50),
+                                 facade_w * 0.88, 0.10, 0.30,
+                                 random.choice([(0.83,0.25,0.12),(0.91,0.67,0.16),
+                                                (0.12,0.43,0.38),(0.18,0.31,0.62)]),
+                                 "sign")
+            # Street lamps at regular intervals, outside the road edge.
+            for side in (-1, 1):
+                lx = side * 5.15
+                self.add_box(lx, y + 2.0, 0.0, 0.12, 0.12, 3.2,
+                             (0.22, 0.24, 0.25), "lamp")
+                self.add_box(lx - side * 0.32, y + 2.0, 3.12, 0.72, 0.12, 0.10,
+                             (0.90, 0.78, 0.45), "lamp_light")
 
-                foliage = random.choice([
-                    (0.10, 0.34, 0.14),
-                    (0.14, 0.42, 0.18),
-                    (0.18, 0.38, 0.13),
-                ])
+    def add_box(self, x, y, z, w, d, h, color, kind):
+        self.objects.append({
+            "x": x, "y": y, "z": z, "w": w, "d": d, "h": h,
+            "color": color, "kind": kind
+        })
 
-                self.box(
-                    tx, ty, 1.2, 1.25, 1.25, 1.4,
-                    foliage, "foliage"
-                )
+    @property
+    def center_x(self):
+        return self.x + self.width * 0.5
 
-            if i % 4 == 0:
-                side = random.choice([-1, 1])
-                lx = side * 5
-                ly = y + 2
-
-                self.box(
-                    lx, ly, 0, 0.1, 0.1, 3.5,
-                    (0.28, 0.29, 0.28), "pole"
-                )
-
-                self.box(
-                    lx - side * 0.25, ly, 3.4,
-                    0.55, 0.18, 0.12,
-                    (0.93, 0.81, 0.52), "lamp"
-                )
+    @property
+    def center_y(self):
+        return self.y + self.height * 0.47
 
     def project(self, x, y, z):
-        a = self.yaw
+        # Camera looks toward the road direction. Screen Y sign is important:
+        # near ground must project toward the bottom, distant ground toward horizon.
+        a = self.camera_yaw
+        cam_x = self.px - math.sin(a) * CAMERA_DISTANCE
+        cam_y = self.py - math.cos(a) * CAMERA_DISTANCE
+        cam_z = CAMERA_HEIGHT
 
-        camx = self.px - math.sin(a) * 5.5
-        camy = self.py - math.cos(a) * 5.5
-
-        dx = x - camx
-        dy = y - camy
-        dz = z - 2.65
-
-        side = dx * math.cos(a) - dy * math.sin(a)
+        dx, dy, dz = x - cam_x, y - cam_y, z - cam_z
+        right_x, right_y = math.cos(a), -math.sin(a)
+        camera_x = dx * right_x + dy * right_y
         forward = dx * math.sin(a) + dy * math.cos(a)
 
-        pitch = 0.14
+        pitch = self.camera_pitch
+        depth = forward * math.cos(pitch) - dz * math.sin(pitch)
+        vertical = forward * math.sin(pitch) + dz * math.cos(pitch)
 
-        depth = (
-            forward * math.cos(pitch)
-            - dz * math.sin(pitch)
-        )
-
-        vert = (
-            forward * math.sin(pitch)
-            + dz * math.cos(pitch)
-        )
-
-        if depth < 0.25:
+        if depth <= 0.25:
             return None
+        scale = FOCAL_LENGTH / depth
+        sx = self.center_x + camera_x * scale
+        sy = self.center_y + vertical * scale
 
-        scale = FOCAL / depth
-
-        sx = self.cx + side * scale
-        sy = self.cy + vert * scale
-
-        if (
-            sx < self.x - self.width
-            or sx > self.right + self.width
-            or sy < self.y - self.height
-            or sy > self.top + self.height
-        ):
+        if sx < self.x - self.width or sx > self.right + self.width:
             return None
+        if sy < self.y - self.height or sy > self.top + self.height:
+            return None
+        return (sx, sy, depth)
 
-        return sx, sy, depth
-
-    def face(self, vertices, color):
-        p = [self.project(*v) for v in vertices]
-
-        if any(v is None for v in p):
+    def draw_face(self, vertices, color):
+        projected = [self.project(*v) for v in vertices]
+        if any(p is None for p in projected):
             return
-
         Color(*color)
-
         Triangle(points=[
-            p[0][0], p[0][1],
-            p[1][0], p[1][1],
-            p[2][0], p[2][1]
+            projected[0][0], projected[0][1],
+            projected[1][0], projected[1][1],
+            projected[2][0], projected[2][1],
+        ])
+        Triangle(points=[
+            projected[0][0], projected[0][1],
+            projected[2][0], projected[2][1],
+            projected[3][0], projected[3][1],
         ])
 
-        Triangle(points=[
-            p[0][0], p[0][1],
-            p[2][0], p[2][1],
-            p[3][0], p[3][1]
-        ])
-
-    def draw_box(self, obj):
-        x = obj["x"]
-        y = obj["y"]
-        z = obj["z"]
-        w = obj["w"]
-        d = obj["d"]
-        h = obj["h"]
-        c = obj["c"]
-
+    def box_faces(self, obj):
+        x, y, z = obj["x"], obj["y"], obj["z"]
+        w, d, h = obj["w"], obj["d"], obj["h"]
         x1, x2 = x - w / 2, x + w / 2
         y1, y2 = y - d / 2, y + d / 2
         z1, z2 = z, z + h
-
-        faces = [
-            (
-                [
-                    (x1, y1, z1), (x2, y1, z1),
-                    (x2, y1, z2), (x1, y1, z2)
-                ],
-                tuple(v * 0.7 for v in c)
-            ),
-            (
-                [
-                    (x2, y1, z1), (x2, y2, z1),
-                    (x2, y2, z2), (x2, y1, z2)
-                ],
-                tuple(min(1, v * 1.12) for v in c)
-            ),
-            (
-                [
-                    (x1, y1, z2), (x2, y1, z2),
-                    (x2, y2, z2), (x1, y2, z2)
-                ],
-                c
-            ),
-            (
-                [
-                    (x1, y2, z1), (x2, y2, z1),
-                    (x2, y2, z2), (x1, y2, z2)
-                ],
-                tuple(v * 0.72 for v in c)
-            )
+        c = obj["color"]
+        dark = tuple(v * 0.69 for v in c)
+        mid = tuple(v * 0.84 for v in c)
+        return [
+            ([(x1,y1,z1),(x2,y1,z1),(x2,y1,z2),(x1,y1,z2)], dark),
+            ([(x2,y1,z1),(x2,y2,z1),(x2,y2,z2),(x2,y1,z2)], mid),
+            ([(x1,y1,z2),(x2,y1,z2),(x2,y2,z2),(x1,y2,z2)], c),
+            ([(x1,y2,z1),(x2,y2,z1),(x2,y2,z2),(x1,y2,z2)], mid),
         ]
 
-        for vertices, color in faces:
-            self.face(vertices, color)
+    def draw_ground_and_road(self):
+        # Draw finite ground tiles so the road and terrain share world coordinates.
+        for row in range(-4, 20):
+            y1 = self.py + row * 5.0
+            y2 = y1 + 5.0
+            self.draw_face([
+                (-55, y1, -0.04), (55, y1, -0.04),
+                (55, y2, -0.04), (-55, y2, -0.04)
+            ], (0.25, 0.43, 0.24))
 
-    def ground(self):
-        start = int(self.py // 12) * 12 - 30
+        # Road surface is exactly at ground level, not a floating board.
+        y1, y2 = self.py - 24, self.py + 82
+        self.draw_face([
+            (-ROAD_HALF, y1, 0.015), (ROAD_HALF, y1, 0.015),
+            (ROAD_HALF, y2, 0.015), (-ROAD_HALF, y2, 0.015)
+        ], (0.17, 0.19, 0.20))
 
-        for i in range(13):
-            y = start + i * 12
-
-            color = (
-                (0.24, 0.41, 0.23)
-                if i % 2 else
-                (0.27, 0.44, 0.25)
-            )
-
-            self.face([
-                (-45, y, -0.03),
-                (45, y, -0.03),
-                (45, y + 12, -0.03),
-                (-45, y + 12, -0.03)
-            ], color)
-
-        y1 = self.py - 22
-        y2 = self.py + 100
-
-        # Jalan aspal
-        self.face([
-            (-ROAD, y1, 0.015),
-            (ROAD, y1, 0.015),
-            (ROAD, y2, 0.015),
-            (-ROAD, y2, 0.015)
-        ], (0.18, 0.19, 0.20))
-
-        # Trotoar dan pembatas jalan
         for side in (-1, 1):
-            self.face([
-                (side * 4.1, y1, 0.025),
-                (side * 5.0, y1, 0.025),
-                (side * 5.0, y2, 0.025),
-                (side * 4.1, y2, 0.025)
+            self.draw_face([
+                (side * 4.0, y1, 0.03), (side * 5.0, y1, 0.03),
+                (side * 5.0, y2, 0.03), (side * 4.0, y2, 0.03)
             ], (0.58, 0.56, 0.49))
 
-            self.face([
-                (side * 5.0, y1, 0.03),
-                (side * 5.12, y1, 0.03),
-                (side * 5.12, y2, 0.03),
-                (side * 5.0, y2, 0.03)
-            ], (0.73, 0.69, 0.59))
-
-        # Marka tengah jalan
-        for y in range(
-            int(self.py) - 20,
-            int(self.py) + 100,
-            7
-        ):
-            self.face([
-                (-0.06, y, 0.045),
-                (0.06, y, 0.045),
-                (0.06, y + 2.6, 0.045),
-                (-0.06, y + 2.6, 0.045)
-            ], (0.96, 0.84, 0.52))
+        for mark_y in range(int(self.py) - 20, int(self.py) + 82, 7):
+            self.draw_face([
+                (-0.075, mark_y, 0.045), (0.075, mark_y, 0.045),
+                (0.075, mark_y + 2.7, 0.045), (-0.075, mark_y + 2.7, 0.045)
+            ], (0.95, 0.84, 0.51))
 
     def draw_player(self):
+        # A visibly three-dimensional low-poly person made from projected box faces.
         bob = 0.0
-
-        if self.jump:
-            bob = math.sin(
-                math.pi * min(1, self.jump_t / 0.72)
-            ) * 1.35
+        if self.is_jumping:
+            t = min(1.0, self.jump_time / self.jump_duration)
+            bob = math.sin(math.pi * t) * self.jump_height
 
         x, y = self.px, self.py
+        body = {
+            "x": x, "y": y, "z": 0.28 + bob,
+            "w": 0.52, "d": 0.36, "h": 0.78,
+            "color": (0.12, 0.30, 0.72), "kind": "player"
+        }
+        head = {
+            "x": x, "y": y, "z": 1.10 + bob,
+            "w": 0.34, "d": 0.32, "h": 0.34,
+            "color": (0.70, 0.47, 0.31), "kind": "player"
+        }
+        legs = [
+            {"x": x - 0.14, "y": y, "z": 0.02 + bob, "w": 0.17,
+             "d": 0.24, "h": 0.32, "color": (0.10,0.12,0.15), "kind":"player"},
+            {"x": x + 0.14, "y": y, "z": 0.02 + bob, "w": 0.17,
+             "d": 0.24, "h": 0.32, "color": (0.10,0.12,0.15), "kind":"player"},
+        ]
+        for obj in [body, head] + legs:
+            for vertices, color in self.box_faces(obj):
+                self.draw_face(vertices, color)
 
-        # Badan
-        self.draw_box({
-            "x": x, "y": y, "z": 0.32 + bob,
-            "w": 0.52, "d": 0.34, "h": 0.72,
-            "c": (0.10, 0.28, 0.72), "k": "player"
-        })
+        # Small aiming indicator in front of the character.
+        fx = x + math.sin(self.player_yaw) * 0.75
+        fy = y + math.cos(self.player_yaw) * 0.75
+        p1 = self.project(x, y, 1.15 + bob)
+        p2 = self.project(fx, fy, 1.15 + bob)
+        if p1 and p2:
+            Color(1.0, 0.85, 0.25, 0.9)
+            Line(points=[p1[0], p1[1], p2[0], p2[1]], width=1.5)
 
-        # Kepala
-        self.draw_box({
-            "x": x, "y": y, "z": 1.08 + bob,
-            "w": 0.34, "d": 0.31, "h": 0.34,
-            "c": (0.68, 0.45, 0.30), "k": "head"
-        })
-
-        # Kaki
-        for offset in (-0.14, 0.14):
-            self.draw_box({
-                "x": x + offset, "y": y,
-                "z": 0.02 + bob,
-                "w": 0.17, "d": 0.22, "h": 0.32,
-                "c": (0.09, 0.10, 0.12), "k": "leg"
-            })
-
-    def notify(self, message):
-        self.toast = message
-        self.toast_t = 2.0
-
-    def shoot(self):
-        if self.drive:
-            self.notify("KELUAR DARI KENDARAAN UNTUK MENEMBAK")
-            return
-
-        if self.ammo[self.weapon] <= 0:
-            self.notify("AMUNISI HABIS")
-            return
-
-        self.ammo[self.weapon] -= 1
-
+    def fire_weapon(self):
+        # Non-graphic arcade projectile for prototype testing.
         a = self.player_yaw
+        self.projectiles.append({
+            "x": self.px, "y": self.py,
+            "vx": math.sin(a) * 18.0,
+            "vy": math.cos(a) * 18.0,
+            "life": 1.1
+        })
+        self.shot_flash = 0.12
+        self.show_message("TEMBAKAN!")
 
-        self.shots.append([
-            self.px, self.py, 1.1,
-            math.sin(a) * 24,
-            math.cos(a) * 24,
-            1.1
-        ])
-
-        self.notify(
-            self.weapons[self.weapon]
-            + " • AMMO "
-            + str(self.ammo[self.weapon])
+    def interact(self):
+        # Nearby world objects provide a useful interaction test for the prototype.
+        nearest = min(
+            (o for o in self.objects if o["kind"] in ("sign", "lamp")),
+            key=lambda o: math.hypot(o["x"] - self.px, o["y"] - self.py),
+            default=None
         )
+        if nearest and math.hypot(nearest["x"] - self.px, nearest["y"] - self.py) < 3.0:
+            self.show_message("KOTA NUSANTARA • AREA KOTA")
+        else:
+            self.show_message("JELAJAHI JALAN UNTUK MENEMUKAN OBJEK")
 
-    def change_weapon(self):
-        self.weapon = (self.weapon + 1) % len(self.weapons)
-        self.notify("SENJATA: " + self.weapons[self.weapon])
+    def jump(self):
+        if not self.is_jumping:
+            self.is_jumping = True
+            self.jump_time = 0.0
 
-    def do_jump(self):
-        if not self.drive and not self.jump:
-            self.jump = True
-            self.jump_t = 0.0
+    def show_message(self, text):
+        self.action_message = text
+        self.message_time = 1.4
 
-    def toggle_drive(self):
-        self.drive = not self.drive
-        self.car_heading = self.player_yaw
-        self.car_speed = 0.0
+    def update(self, dt):
+        dt = min(dt, 0.05)
+        speed = 8.0 if self.sprinting else 4.5
 
-        self.notify(
-            "MODE MENGEMUDI"
-            if self.drive else
-            "KELUAR KENDARAAN"
-        )
+        # Input is camera-relative; camera orbit stays independent of player facing.
+        heading = self.camera_yaw
+        dx = math.sin(heading) * self.move_y + math.cos(heading) * self.move_x
+        dy = math.cos(heading) * self.move_y - math.sin(heading) * self.move_x
+        mag = math.hypot(dx, dy)
+        if mag > 1:
+            dx, dy = dx / mag, dy / mag
 
-    def joy(self, touch):
-        dx = touch.x - self.joy_origin[0]
-        dy = touch.y - self.joy_origin[1]
+        if mag > JOYSTICK_DEADZONE:
+            nx = self.px + dx * speed * dt
+            ny = self.py + dy * speed * dt
+            if self.clear_position(nx, self.py):
+                self.px = nx
+            if self.clear_position(self.px, ny):
+                self.py = ny
+            self.player_yaw = math.atan2(dx, dy)
 
-        radius = dp(42)
-        length = math.hypot(dx, dy)
+        if self.is_jumping:
+            self.jump_time += dt
+            if self.jump_time >= self.jump_duration:
+                self.is_jumping = False
+                self.jump_time = 0.0
 
-        if length > radius:
-            dx = dx * radius / length
-            dy = dy * radius / length
+        for projectile in self.projectiles:
+            projectile["x"] += projectile["vx"] * dt
+            projectile["y"] += projectile["vy"] * dt
+            projectile["life"] -= dt
+        self.projectiles = [p for p in self.projectiles if p["life"] > 0]
+        self.shot_flash = max(0.0, self.shot_flash - dt)
+        self.message_time = max(0.0, self.message_time - dt)
 
-        self.joy_knob = (
-            self.joy_origin[0] + dx,
-            self.joy_origin[1] + dy
-        )
+        self.draw_world()
 
-        self.mx = dx / radius
-        self.my = dy / radius
-
-        if abs(self.mx) < 0.1:
-            self.mx = 0.0
-
-        if abs(self.my) < 0.1:
-            self.my = 0.0
+    def clear_position(self, x, y):
+        # Player stays in the road + sidewalk corridor for this first prototype.
+        if abs(x) > 5.45:
+            return False
+        for obj in self.objects:
+            if obj["kind"] != "building":
+                continue
+            if (abs(x - obj["x"]) < obj["w"] / 2 + 0.38 and
+                abs(y - obj["y"]) < obj["d"] / 2 + 0.38):
+                return False
+        return True
 
     def on_touch_down(self, touch):
+        # Left side is a virtual joystick; right side rotates the camera.
         if not self.collide_point(*touch.pos):
             return super().on_touch_down(touch)
-
-        # Joystick kiri bawah
-        if (
-            touch.x < self.x + self.width * 0.34
-            and touch.y < self.y + self.height * 0.42
-        ):
-            self.joy_id = touch.uid
-            self.joy_origin = touch.pos
-            self.joy_knob = touch.pos
-            touch.grab(self)
-            self.joy(touch)
-            return True
-
-        # Geser layar kanan untuk mengubah arah kamera
-        if touch.x > self.x + self.width * 0.36:
-            self.look_id = touch.uid
-            self.look_last = touch.pos
+        if touch.x < self.x + self.width * 0.42 and self.left_touch is None:
+            self.left_touch = touch
+            self.joy_center = touch.pos
+            self.joy_pos = touch.pos
+            self._update_joystick(touch.x, touch.y)
             touch.grab(self)
             return True
-
+        if touch.x >= self.x + self.width * 0.42 and self.right_touch is None:
+            self.right_touch = touch
+            self.last_right_x = touch.x
+            self.last_right_y = touch.y
+            touch.grab(self)
+            return True
         return super().on_touch_down(touch)
 
     def on_touch_move(self, touch):
-        if touch.grab_current is not self:
-            return super().on_touch_move(touch)
-
-        if touch.uid == self.joy_id:
-            self.joy(touch)
+        if touch.grab_current is self:
+            if touch is self.left_touch:
+                self._update_joystick(touch.x, touch.y)
+            elif touch is self.right_touch:
+                dx = touch.x - self.last_right_x
+                dy = touch.y - self.last_right_y
+                self.camera_yaw -= dx * CAMERA_SENSITIVITY
+                self.camera_pitch = max(-0.08, min(0.48,
+                    self.camera_pitch - dy * CAMERA_SENSITIVITY * 0.45))
+                self.last_right_x = touch.x
+                self.last_right_y = touch.y
             return True
-
-        if touch.uid == self.look_id and self.look_last:
-            delta_x = touch.x - self.look_last[0]
-
-            # Sensitivitas kamera rendah
-            self.yaw += delta_x * 0.0038
-
-            self.look_last = touch.pos
-            return True
-
-        return True
+        return super().on_touch_move(touch)
 
     def on_touch_up(self, touch):
         if touch.grab_current is self:
             touch.ungrab(self)
-
-        if touch.uid == self.joy_id:
-            self.joy_id = None
-            self.mx = 0.0
-            self.my = 0.0
+            if touch is self.left_touch:
+                self.left_touch = None
+                self.move_x = self.move_y = 0.0
+                self.joy_pos = self.joy_center
+            if touch is self.right_touch:
+                self.right_touch = None
             return True
-
-        if touch.uid == self.look_id:
-            self.look_id = None
-            self.look_last = None
-            return True
-
         return super().on_touch_up(touch)
 
-    def tick(self, dt):
-        dt = min(dt, 0.05)
+    def _update_joystick(self, x, y):
+        cx, cy = self.joy_center
+        dx, dy = x - cx, y - cy
+        radius = dp(42)
+        distance = math.hypot(dx, dy)
+        if distance > radius:
+            dx, dy = dx * radius / distance, dy * radius / distance
+        self.joy_pos = (cx + dx, cy + dy)
+        self.move_x = max(-1.0, min(1.0, dx / radius))
+        self.move_y = max(-1.0, min(1.0, dy / radius))
 
-        if self.drive:
-            if self.my > 0:
-                self.car_speed += 2.8 * dt
-            elif self.my < 0:
-                self.car_speed -= 5.0 * dt
-            else:
-                self.car_speed -= 1.1 * dt
-
-            self.car_speed = max(0, min(12, self.car_speed))
-
-            self.car_heading += self.steer * dt * 1.7
-
-            self.px += math.sin(self.car_heading) * self.car_speed * dt
-            self.py += math.cos(self.car_heading) * self.car_speed * dt
-
-            self.yaw = self.car_heading
-            self.player_yaw = self.car_heading
-
-        else:
-            speed = 7.2 if self.run else 4.0
-
-            dx = (
-                math.sin(self.yaw) * self.my
-                + math.cos(self.yaw) * self.mx
-            )
-
-            dy = (
-                math.cos(self.yaw) * self.my
-                - math.sin(self.yaw) * self.mx
-            )
-
-            magnitude = math.hypot(dx, dy)
-
-            if magnitude > 1:
-                dx /= magnitude
-                dy /= magnitude
-
-            if magnitude > 0.1:
-                nx = self.px + dx * speed * dt
-
-                # Membatasi karakter agar tidak keluar
-                # dari area jalan pada prototipe awal.
-                if abs(nx) < 4.65:
-                    self.px = nx
-
-                self.py += dy * speed * dt
-
-                self.player_yaw = math.atan2(dx, dy)
-
-        if self.jump:
-            self.jump_t += dt
-
-            if self.jump_t >= 0.72:
-                self.jump = False
-                self.jump_t = 0.0
-
-        for shot in self.shots:
-            shot[0] += shot[3] * dt
-            shot[1] += shot[4] * dt
-            shot[5] -= dt
-
-        self.shots = [
-            shot for shot in self.shots
-            if shot[5] > 0
-        ]
-
-        self.toast_t = max(0.0, self.toast_t - dt)
-
-        self.draw()
-
-    def draw(self):
+    def draw_world(self):
         self.canvas.clear()
-
         with self.canvas:
-            Color(0.39, 0.68, 0.84)
+            Color(0.43, 0.70, 0.86)
             Rectangle(pos=self.pos, size=self.size)
 
-            self.ground()
+            self.draw_ground_and_road()
 
             visible = []
-
-            for obj in self.objs:
-                distance = math.hypot(
-                    obj["x"] - self.px,
-                    obj["y"] - self.py
-                )
-
-                if distance < 62:
-                    visible.append((distance, obj))
-
-            # Gambar objek jauh terlebih dahulu
+            for obj in self.objects:
+                dist = math.hypot(obj["x"] - self.px, obj["y"] - self.py)
+                if dist < VIEW_DISTANCE:
+                    visible.append((dist, obj))
             visible.sort(key=lambda item: item[0], reverse=True)
-
             for _, obj in visible:
-                self.draw_box(obj)
+                for vertices, color in self.box_faces(obj):
+                    self.draw_face(vertices, color)
 
-            for shot in self.shots:
-                p = self.project(shot[0], shot[1], shot[2])
-
-                if p:
-                    Color(1.0, 0.76, 0.12)
-                    Ellipse(
-                        pos=(p[0] - dp(3), p[1] - dp(3)),
-                        size=(dp(6), dp(6))
-                    )
+            for p in self.projectiles:
+                q = self.project(p["x"], p["y"], 1.0)
+                if q:
+                    Color(1.0, 0.75, 0.12, min(1, p["life"] * 2))
+                    Ellipse(pos=(q[0]-dp(3), q[1]-dp(3)), size=(dp(6), dp(6)))
 
             self.draw_player()
 
-            # Joystick
-            if self.joy_id is not None:
-                jx, jy = self.joy_origin
-                kx, ky = self.joy_knob
+            # Joystick visual.
+            if self.left_touch is not None:
+                jx, jy = self.joy_center
             else:
-                jx = self.x + dp(76)
-                jy = self.y + dp(76)
-                kx, ky = jx, jy
-
-            Color(1, 1, 1, 0.18)
-            Ellipse(
-                pos=(jx - dp(42), jy - dp(42)),
-                size=(dp(84), dp(84))
-            )
-
-            Color(1, 1, 1, 0.52)
-            Ellipse(
-                pos=(kx - dp(15), ky - dp(15)),
-                size=(dp(30), dp(30))
-            )
-
-            # Penanda tengah layar
-            Color(1, 1, 1, 0.7)
-
-            Line(points=[
-                self.cx - dp(8), self.cy,
-                self.cx + dp(8), self.cy
-            ])
-
-            Line(points=[
-                self.cx, self.cy - dp(8),
-                self.cx, self.cy + dp(8)
-            ])
+                jx, jy = self.x + dp(76), self.y + dp(76)
+            Color(1, 1, 1, 0.19)
+            Ellipse(pos=(jx-dp(42), jy-dp(42)), size=(dp(84), dp(84)))
+            kx, ky = self.joy_pos if self.left_touch is not None else (jx, jy)
+            Color(1, 1, 1, 0.48)
+            Ellipse(pos=(kx-dp(16), ky-dp(16)), size=(dp(32), dp(32)))
 
 
-class Game(App):
+class NusantaraApp(App):
     def build(self):
-        Window.clearcolor = (0.39, 0.68, 0.84, 1)
+        Window.clearcolor = (0.43, 0.70, 0.86, 1)
+        root = FloatLayout()
+        self.world = World3D(size_hint=(1, 1))
+        root.add_widget(self.world)
 
-        self.rootbox = FloatLayout()
-        self.w = World()
+        self.add_label(root, "[b]KOTA NUSANTARA[/b]  [size=11]PROTOTYPE 0.4[/size]",
+                       {"x": 0.025, "top": 0.98}, (dp(300), dp(42)), "left")
+        self.status = self.add_label(root, "KECEPATAN: 0 km/jam",
+                       {"right": 0.98, "top": 0.98}, (dp(230), dp(40)), "right")
 
-        self.rootbox.add_widget(self.w)
+        self.add_button(root, "LARI", {"right": 0.96, "y": 0.12},
+                        (dp(86), dp(54)),
+                        lambda *_: setattr(self.world, "sprinting", True),
+                        lambda *_: setattr(self.world, "sprinting", False))
+        self.add_button(root, "LOMPAT", {"right": 0.96, "y": 0.29},
+                        (dp(86), dp(54)),
+                        lambda *_: self.world.jump())
+        self.add_button(root, "SENJATA", {"right": 0.96, "y": 0.46},
+                        (dp(86), dp(54)),
+                        lambda *_: self.world.fire_weapon())
+        self.add_button(root, "AKSI", {"right": 0.96, "y": 0.63},
+                        (dp(86), dp(54)),
+                        lambda *_: self.world.interact())
 
-        self.label(
-            "[b]KOTA NUSANTARA[/b]  [size=10]PROTOTYPE 0.4[/size]",
-            {"x": 0.02, "top": 0.985},
-            (dp(280), dp(34)),
-            "left"
-        )
+        self.message = self.add_label(root, "", {"center_x": 0.5, "y": 0.12},
+                                      (dp(440), dp(40)), "center")
+        Clock.schedule_interval(self.update_hud, 0.15)
+        return root
 
-        self.stats = self.label(
-            "",
-            {"x": 0.02, "top": 0.925},
-            (dp(260), dp(72)),
-            "left"
-        )
-
-        # Peta mini sederhana sebagai placeholder
-        self.label(
-            "[b]MAP[/b]\n[ size=12 ] ● ─ ─ [ /size ]",
-            {"x": 0.02, "top": 0.80},
-            (dp(105), dp(50)),
-            "left"
-        )
-
-        self.btn(
-            "⚙",
-            {"right": 0.97, "top": 0.97},
-            (dp(48), dp(42)),
-            self.settings
-        )
-
-        self.buttons = {}
-
-        self.buttons["weapon"] = self.btn(
-            "PILIH SENJATA",
-            {"right": 0.97, "y": 0.43},
-            (dp(100), dp(42)),
-            lambda *_: self.w.change_weapon()
-        )
-
-        self.buttons["jump"] = self.btn(
-            "LOMPAT",
-            {"right": 0.97, "y": 0.32},
-            (dp(100), dp(42)),
-            lambda *_: self.w.do_jump()
-        )
-
-        self.buttons["shoot"] = self.btn(
-            "TEMBAK",
-            {"right": 0.97, "y": 0.21},
-            (dp(100), dp(42)),
-            lambda *_: self.w.shoot()
-        )
-
-        self.buttons["run"] = self.btn(
-            "LARI CEPAT",
-            {"right": 0.86, "y": 0.09},
-            (dp(100), dp(42)),
-            self.run_down,
-            self.run_up
-        )
-
-        self.buttons["drive"] = self.btn(
-            "MENGEMUDI",
-            {"right": 0.97, "y": 0.09},
-            (dp(104), dp(42)),
-            self.toggle_drive
-        )
-
-        self.buttons["left"] = self.btn(
-            "◀",
-            {"right": 0.97, "y": 0.31},
-            (dp(65), dp(52)),
-            lambda *_: self.steer(-1),
-            lambda *_: self.steer(0)
-        )
-
-        self.buttons["right"] = self.btn(
-            "▶",
-            {"right": 0.86, "y": 0.31},
-            (dp(65), dp(52)),
-            lambda *_: self.steer(1),
-            lambda *_: self.steer(0)
-        )
-
-        self.toast = self.label(
-            "",
-            {"center_x": 0.5, "y": 0.12},
-            (dp(430), dp(36)),
-            "center"
-        )
-
-        Clock.schedule_interval(self.refresh, 0.15)
-
-        self.update_buttons()
-
-        return self.rootbox
-
-    def label(self, text, pos, size, align):
+    def add_label(self, root, text, pos_hint, size, align):
         label = Label(
-            text=text,
-            markup=True,
-            size_hint=(None, None),
-            size=size,
-            pos_hint=pos,
-            color=(1, 1, 1, 1),
-            halign=align,
-            valign="middle"
+            text=text, markup=True, size_hint=(None, None),
+            size=size, pos_hint=pos_hint, halign=align, valign="middle",
+            color=(1, 1, 1, 1)
         )
-
-        label.bind(
-            size=lambda instance, value:
-            setattr(instance, "text_size", value)
-        )
-
-        self.rootbox.add_widget(label)
+        label.bind(size=lambda instance, value: setattr(instance, "text_size", value))
+        root.add_widget(label)
         return label
 
-    def btn(self, text, pos, size, press, release=None):
+    def add_button(self, root, text, pos_hint, size, on_press, on_release=None):
         button = Button(
-            text=text,
-            size_hint=(None, None),
-            size=size,
-            pos_hint=pos,
-            background_normal="",
-            background_down="",
-            background_color=(0.035, 0.16, 0.27, 0.88),
-            color=(1, 1, 1, 1),
-            font_size=dp(11)
+            text=text, size_hint=(None, None), size=size, pos_hint=pos_hint,
+            background_normal="", background_down="",
+            background_color=(0.05, 0.19, 0.31, 0.94),
+            color=(1, 1, 1, 1), font_size=dp(13)
         )
-
-        button.bind(on_press=press)
-
-        if release:
-            button.bind(on_release=release)
-
-        self.rootbox.add_widget(button)
+        button.bind(on_press=on_press)
+        if on_release:
+            button.bind(on_release=on_release)
+        root.add_widget(button)
         return button
 
-    def run_down(self, *_):
-        self.w.run = True
-
-    def run_up(self, *_):
-        self.w.run = False
-
-    def steer(self, value, *_):
-        self.w.steer = value
-
-    def toggle_drive(self, *_):
-        self.w.toggle_drive()
-        self.update_buttons()
-
-    def update_buttons(self):
-        driving = self.w.drive
-
-        for key in ("weapon", "jump", "shoot", "run"):
-            self.buttons[key].opacity = 0 if driving else 1
-            self.buttons[key].disabled = driving
-
-        for key in ("left", "right"):
-            self.buttons[key].opacity = 1 if driving else 0
-            self.buttons[key].disabled = not driving
-
-        self.buttons["drive"].text = (
-            "KELUAR" if driving else "MENGEMUDI"
-        )
-
-    def settings(self, *_):
-        box = BoxLayout(
-            orientation="vertical",
-            padding=dp(12),
-            spacing=dp(10)
-        )
-
-        box.add_widget(
-            Label(text="KOTA NUSANTARA • PENGATURAN")
-        )
-
-        reset_button = Button(
-            text="KEMBALI KE POSISI AWAL",
-            size_hint_y=None,
-            height=dp(42)
-        )
-
-        close_button = Button(
-            text="TUTUP",
-            size_hint_y=None,
-            height=dp(42)
-        )
-
-        box.add_widget(reset_button)
-        box.add_widget(close_button)
-
-        popup = Popup(
-            title="Pengaturan",
-            content=box,
-            size_hint=(0.72, 0.55)
-        )
-
-        reset_button.bind(
-            on_release=lambda *_: self.reset()
-        )
-
-        close_button.bind(on_release=popup.dismiss)
-
-        popup.open()
-
-    def reset(self):
-        self.w.px = 0.0
-        self.w.py = 0.0
-        self.w.yaw = 0.0
-        self.w.player_yaw = 0.0
-        self.w.car_speed = 0.0
-
-    def refresh(self, dt):
-        w = self.w
-
-        if w.drive:
-            speed = int(w.car_speed * 3.6)
-        else:
-            movement = math.hypot(w.mx, w.my)
-            base_speed = 7.2 if w.run else 4.0
-            speed = int(base_speed * movement * 3.6)
-
-        self.stats.text = (
-            f"♥ {w.health}/100     $ {w.money}\n"
-            f"{w.weapons[w.weapon]} • AMMO {w.ammo[w.weapon]}\n"
-            f"KECEPATAN {speed} km/jam"
-        )
-
-        self.toast.text = (
-            w.toast if w.toast_t > 0 else ""
-        )
-
-        self.update_buttons()
+    def update_hud(self, dt):
+        w = self.world
+        strength = min(1.0, math.hypot(w.move_x, w.move_y))
+        speed = (8.0 if w.sprinting else 4.5) * strength
+        self.status.text = f"KECEPATAN: {int(speed * 3.6)} km/jam"
+        self.message.text = w.action_message if w.message_time > 0 else ""
 
 
 if __name__ == "__main__":
-    Game().run()
+    NusantaraApp().run()
