@@ -1,29 +1,21 @@
-# Kota Nusantara 3D — Prototype 0.2
+# Kota Nusantara 3D — Prototype 0.3
 
-Paket ini berisi `main.py` yang memperbaiki beberapa masalah input dan tata letak dari prototype 0.1.
+## Perubahan dari 0.2
+- Koreksi tanda proyeksi vertikal agar tanah jauh bergerak menuju horizon dan tanah dekat menuju bawah layar.
+- Jalan, trotoar, dan tanah berada pada koordinat dunia yang sama.
+- Bangunan low-poly memiliki beberapa bidang sisi dan atap.
+- Kamera tetap menggunakan kontrol sentuh yang lebih lambat.
+- Tombol LOMPAT, SENJATA (proyektil arcade non-grafis), AKSI, dan LARI.
+- Kontrol gerak joystick kiri dan kamera dengan geseran sisi kanan.
 
-## Perubahan
-- Kamera dipisahkan dari arah hadap karakter.
-- Sensitivitas kamera diturunkan menjadi 0.0015 radian per piksel.
-- Delta sentuhan kamera dibatasi agar gerakan tidak melonjak.
-- Joystick diberi dead zone.
-- Pergerakan mengikuti arah kamera.
-- Tanah, jalan, dan trotoar memakai koordinat dunia yang sama.
-- Bangunan ditempatkan di luar trotoar dan tabrakan dasar dipertahankan.
+## File
+- `main.py`: kode game
+- `buildozer.spec`: konfigurasi APK
+- `requirements.txt`: dependensi Python
+- `.github/workflows/build-apk.yml`: build APK otomatis
 
-## Cara memakai
-1. Ekstrak ZIP.
-2. Salin `main.py` ke root repository GitHub, menggantikan file lama.
-3. Commit perubahan ke branch `main`.
-4. Jalankan GitHub Actions untuk membangun APK debug.
-5. Instal APK baru dan uji kontrol di perangkat Android.
+## Build
+Commit file ke branch `main`, buka Actions, jalankan workflow, lalu unduh artifact `kota-nusantara-3d-v03-debug`.
 
-## Dependensi
-`requirements.txt`:
-    kivy==2.3.1
-
-Buildozer:
-    requirements = python3,kivy==2.3.1
-
-## Catatan teknis
-Renderer ini masih menggunakan proyeksi perspektif manual melalui Kivy canvas. Kivy canvas tidak menyediakan depth buffer 3D untuk kode ini, sehingga pengurutan bidang yang saling tumpang tindih belum sempurna. Paket ini adalah perbaikan prototype, bukan engine 3D komersial penuh.
+## Catatan
+Ini tetap renderer polygon/proyeksi perspektif manual berbasis Kivy, bukan engine 3D sejati dengan depth buffer. Karakter dan bangunan dibuat dari balok low-poly yang diproyeksikan ke layar. Sistem senjata saat ini hanya menampilkan proyektil arcade; belum ada damage, musuh, atau animasi senjata. Tombol AKSI masih berupa placeholder. Untuk game open-world 3D yang lebih kompleks, renderer/engine 3D khusus akan lebih tepat.
