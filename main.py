@@ -31,7 +31,6 @@ class GameWorld(Widget):
         Clock.schedule_once(lambda dt: self.spawn_world_entities(), 0.5)
 
     def spawn_world_entities(self):
-        # Spawn NPC dengan aktivitas random
         for i in range(6):
             self.npcs.append({
                 'x': random.randint(-250, 250),
@@ -41,7 +40,6 @@ class GameWorld(Widget):
                 'timer': random.randint(50, 150)
             })
             
-        # Spawn Kendaraan di jalan
         for i in range(3):
             self.vehicles.append({
                 'x': random.choice([-70, 70]),
@@ -65,7 +63,6 @@ class GameWorld(Widget):
                 self.jump_offset = 0
                 self.is_jumping = False
 
-        # Update NPC berjalan acak
         for npc in self.npcs:
             npc['timer'] -= 1
             if npc['timer'] <= 0:
@@ -79,6 +76,7 @@ class GameWorld(Widget):
 
     def redraw(self):
         self.canvas.clear()
+        # Ambil ukuran layar aman untuk mencegah crash awal
         w = self.width if self.width > 100 else 800
         h = self.height if self.height > 100 else 600
         
@@ -195,7 +193,6 @@ class KotaNusantaraApp(App):
         self.right_actions_layout.clear_widgets()
         
         if self.game_world.in_vehicle:
-            # Mode Mengemudi: Tombol kanan berubah menjadi panah kiri / kanan
             self.btn_steer_left = Button(text="◀ KIRI", size_hint=(None, None), size=(100, 55), pos=(20, 50))
             self.btn_steer_left.bind(press=lambda x: setattr(self.game_world, 'steering', -1), release=lambda x: setattr(self.game_world, 'steering', 0))
             
@@ -209,7 +206,6 @@ class KotaNusantaraApp(App):
             self.right_actions_layout.add_widget(self.btn_steer_right)
             self.right_actions_layout.add_widget(self.btn_exit_car)
         else:
-            # Kembali ke Mode Jalan Kaki
             self.right_actions_layout.add_widget(self.btn_weapon)
             self.right_actions_layout.add_widget(self.btn_jump)
             self.right_actions_layout.add_widget(self.btn_drive)
