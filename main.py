@@ -1,417 +1,264 @@
-__version__ = "0.3.0"
-
-import math
-import random
+import kivy
+kivy.require('2.1.0')
 
 from kivy.app import App
-from kivy.clock import Clock
-from kivy.core.window import Window
-from kivy.graphics import Color, Triangle, Rectangle, Ellipse, Line
-from kivy.metrics import dp
 from kivy.uix.widget import Widget
-from kivy.uix.label import Label
-from kivy.uix.button import Button
 from kivy.uix.floatlayout import FloatLayout
+from kivy.uix.button import Button
+from kivy.uix.label import Label
+from kivy.clock import Clock
+from kivy.graphics import Color, Rectangle, Line, Ellipse
+import random
 
-
-# Kota Nusantara 3D prototype 0.3
-# Lightweight polygon-based 3D projection using Kivy canvas.
-# This is a 3D-style prototype, not a hardware-accelerated 3D engine.
-
-ROAD_HALF = 4.0
-FOCAL_LENGTH = 520.0
-VIEW_DISTANCE = 55.0
-CAMERA_DISTANCE = 6.0
-CAMERA_HEIGHT = 2.7
-CAMERA_SENSITIVITY = 0.0015
-JOYSTICK_RADIUS = dp(42)
-JOYSTICK_DEADZONE = 0.12
-
-
-class World3D(Widget):
+class GameWorld(Widget):
     def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.px = 0.0
-        self.py = 0.0
-        self.player_yaw = 0.0
-        self.camera_yaw = 0.0
-        self.camera_pitch = 0.17
-
-        self.move_x = 0.0
-        self.move_y = 0.0
-        self.sprinting = False
-
-        self.jump_time = 0.0
-        self.jump_duration = 0.72
-        self.jump_height = 1.45
+        super(GameWorld, self).__init__(**kwargs)
+        self.player_x = 0
+        self.player_y = 0
+        self.player_speed = 5
+        self.is_running = False
         self.is_jumping = False
+        self.jump_offset = 0
+        self.jump_vel = 0
+        
+        # Status Game
+        self.health = 100
+        self.money = 50000
+        self.speed_kmh = 0
+        
+        # State Kendaraan & Kontrol
+        self.in_vehicle = False
+        self.steering = 0 # -1 untuk kiri, 1 untuk kanan, 0 lurus
+        self.move_dir = 0 # Kontrol dari tombol arah bawah/atas
+        
+        # Daftar NPC dan Kendaraan di Dunia Game
+        self.npcs = []
+        self.vehicles = []
+        self.spawn_world_entities()
 
-        self.left_touch = None
-        self.right_touch = None
-        self.joy_center = (0.0, 0.0)
-        self.joy_pos = (0.0, 0.0)
-        self.last_right_x = 0.0
-
-        self.projectiles = []
-        self.shot_flash = 0.0
-        self.action_message = ""
-        self.message_time = 0.0
-
-        self.objects = []
-        self.make_city()
-        Clock.schedule_interval(self.update, 1.0 / 30.0)
-
-    def make_city(self):
-        random.seed(17)
-        self.objects.clear()
-        colors = [
-            (0.78, 0.59, 0.39), (0.78, 0.75, 0.63),
-            (0.68, 0.38, 0.29), (0.43, 0.61, 0.51),
-            (0.83, 0.73, 0.49), (0.62, 0.68, 0.68),
-            (0.77, 0.77, 0.70)
-        ]
-
-        # Low-poly Indonesian shop houses on both sides of the road.
-        for row in range(-14, 25):
-            y = row * 8.0 + 4.0
-            for side in (-1, 1):
-                x = side * random.uniform(7.8, 10.2)
-                w = random.uniform(2.6, 3.8)
-                d = random.uniform(3.2, 4.6)
-                h = random.uniform(3.0, 5.8)
-                color = random.choice(colors)
-                self.add_box(x, y, 0, w, d, h, color, "building")
-                # Flat roof and simple dark doorway.
-                roof = tuple(max(0.04, c * 0.68) for c in color)
-                self.add_box(x, y, h, w + 0.12, d + 0.12, 0.18, roof, "roof")
-                self.add_box(x, y - d / 2 - 0.015, 0, 0.62, 0.035,
-                             min(1.8, h * 0.55), (0.19, 0.16, 0.13), "door")
-
-            # Trees between sidewalk and houses.
-            for side in (-1, 1):
-                tx = side * random.uniform(5.35, 6.15)
-                ty = y + random.uniform(-2.2, 2.2)
-                self.add_box(tx, ty, 0, 0.25, 0.25, 1.55,
-                             (0.35, 0.21, 0.11), "trunk")
-                # Faceted, chunky canopy approximation.
-                self.add_box(tx, ty, 1.25, 1.35, 1.35, 1.45,
-                             random.choice([(0.12, 0.39, 0.17),
-                                            (0.15, 0.44, 0.20),
-                                            (0.18, 0.35, 0.13)]), "leaf")
-
-    def add_box(self, x, y, z, w, d, h, color, kind):
-        self.objects.append({
-            "x": x, "y": y, "z": z, "w": w, "d": d, "h": h,
-            "color": color, "kind": kind
-        })
-
-    @property
-    def center_x(self):
-        return self.x + self.width * 0.5
-
-    @property
-    def center_y(self):
-        return self.y + self.height * 0.47
-
-    def project(self, x, y, z):
-        # Camera looks toward the road direction. Screen Y sign is important:
-        # near ground must project toward the bottom, distant ground toward horizon.
-        a = self.camera_yaw
-        cam_x = self.px - math.sin(a) * CAMERA_DISTANCE
-        cam_y = self.py - math.cos(a) * CAMERA_DISTANCE
-        cam_z = CAMERA_HEIGHT
-
-        dx, dy, dz = x - cam_x, y - cam_y, z - cam_z
-        right_x, right_y = math.cos(a), -math.sin(a)
-        camera_x = dx * right_x + dy * right_y
-        forward = dx * math.sin(a) + dy * math.cos(a)
-
-        pitch = self.camera_pitch
-        depth = forward * math.cos(pitch) - dz * math.sin(pitch)
-        vertical = forward * math.sin(pitch) + dz * math.cos(pitch)
-
-        if depth <= 0.25:
-            return None
-        scale = FOCAL_LENGTH / depth
-        sx = self.center_x + camera_x * scale
-        sy = self.center_y + vertical * scale
-
-        if sx < self.x - self.width or sx > self.right + self.width:
-            return None
-        if sy < self.y - self.height or sy > self.top + self.height:
-            return None
-        return (sx, sy, depth)
-
-    def draw_face(self, vertices, color):
-        projected = [self.project(*v) for v in vertices]
-        if any(p is None for p in projected):
-            return
-        Color(*color)
-        Triangle(points=[
-            projected[0][0], projected[0][1],
-            projected[1][0], projected[1][1],
-            projected[2][0], projected[2][1],
-        ])
-        Triangle(points=[
-            projected[0][0], projected[0][1],
-            projected[2][0], projected[2][1],
-            projected[3][0], projected[3][1],
-        ])
-
-    def box_faces(self, obj):
-        x, y, z = obj["x"], obj["y"], obj["z"]
-        w, d, h = obj["w"], obj["d"], obj["h"]
-        x1, x2 = x - w / 2, x + w / 2
-        y1, y2 = y - d / 2, y + d / 2
-        z1, z2 = z, z + h
-        c = obj["color"]
-        dark = tuple(v * 0.69 for v in c)
-        mid = tuple(v * 0.84 for v in c)
-        return [
-            ([(x1,y1,z1),(x2,y1,z1),(x2,y1,z2),(x1,y1,z2)], dark),
-            ([(x2,y1,z1),(x2,y2,z1),(x2,y2,z2),(x2,y1,z2)], mid),
-            ([(x1,y1,z2),(x2,y1,z2),(x2,y2,z2),(x1,y2,z2)], c),
-            ([(x1,y2,z1),(x2,y2,z1),(x2,y2,z2),(x1,y2,z2)], mid),
-        ]
-
-    def draw_ground_and_road(self):
-        # Draw finite ground tiles so the road and terrain share world coordinates.
-        for row in range(-4, 20):
-            y1 = self.py + row * 5.0
-            y2 = y1 + 5.0
-            self.draw_face([
-                (-55, y1, -0.04), (55, y1, -0.04),
-                (55, y2, -0.04), (-55, y2, -0.04)
-            ], (0.25, 0.43, 0.24))
-
-        # Road surface is exactly at ground level, not a floating board.
-        y1, y2 = self.py - 24, self.py + 82
-        self.draw_face([
-            (-ROAD_HALF, y1, 0.015), (ROAD_HALF, y1, 0.015),
-            (ROAD_HALF, y2, 0.015), (-ROAD_HALF, y2, 0.015)
-        ], (0.17, 0.19, 0.20))
-
-        for side in (-1, 1):
-            self.draw_face([
-                (side * 4.0, y1, 0.03), (side * 5.0, y1, 0.03),
-                (side * 5.0, y2, 0.03), (side * 4.0, y2, 0.03)
-            ], (0.58, 0.56, 0.49))
-
-        for mark_y in range(int(self.py) - 20, int(self.py) + 82, 7):
-            self.draw_face([
-                (-0.075, mark_y, 0.045), (0.075, mark_y, 0.045),
-                (0.075, mark_y + 2.7, 0.045), (-0.075, mark_y + 2.7, 0.045)
-            ], (0.95, 0.84, 0.51))
-
-    def draw_player(self):
-        # A visibly three-dimensional low-poly person made from projected box faces.
-        bob = 0.0
-        if self.is_jumping:
-            t = min(1.0, self.jump_time / self.jump_duration)
-            bob = math.sin(math.pi * t) * self.jump_height
-
-        x, y = self.px, self.py
-        body = {
-            "x": x, "y": y, "z": 0.28 + bob,
-            "w": 0.52, "d": 0.36, "h": 0.78,
-            "color": (0.12, 0.30, 0.72), "kind": "player"
-        }
-        head = {
-            "x": x, "y": y, "z": 1.10 + bob,
-            "w": 0.34, "d": 0.32, "h": 0.34,
-            "color": (0.70, 0.47, 0.31), "kind": "player"
-        }
-        legs = [
-            {"x": x - 0.14, "y": y, "z": 0.02 + bob, "w": 0.17,
-             "d": 0.24, "h": 0.32, "color": (0.10,0.12,0.15), "kind":"player"},
-            {"x": x + 0.14, "y": y, "z": 0.02 + bob, "w": 0.17,
-             "d": 0.24, "h": 0.32, "color": (0.10,0.12,0.15), "kind":"player"},
-        ]
-        for obj in [body, head] + legs:
-            for vertices, color in self.box_faces(obj):
-                self.draw_face(vertices, color)
-
-        # Small aiming indicator in front of the character.
-        fx = x + math.sin(self.player_yaw) * 0.75
-        fy = y + math.cos(self.player_yaw) * 0.75
-        p1 = self.project(x, y, 1.15 + bob)
-        p2 = self.project(fx, fy, 1.15 + bob)
-        if p1 and p2:
-            Color(1.0, 0.85, 0.25, 0.9)
-            Line(points=[p1[0], p1[1], p2[0], p2[1]], width=1.5)
-
-    def fire_weapon(self):
-        # Non-graphic arcade projectile for prototype testing.
-        a = self.player_yaw
-        self.projectiles.append({
-            "x": self.px, "y": self.py,
-            "vx": math.sin(a) * 18.0,
-            "vy": math.cos(a) * 18.0,
-            "life": 1.1
-        })
-        self.shot_flash = 0.12
-        self.show_message("TEMBAKAN!")
-
-    def interact(self):
-        self.show_message("BELUM ADA OBJEK INTERAKTIF DI DEKATMU")
-
-    def jump(self):
-        if not self.is_jumping:
-            self.is_jumping = True
-            self.jump_time = 0.0
-
-    def show_message(self, text):
-        self.action_message = text
-        self.message_time = 1.4
+    def spawn_world_entities(self):
+        # Spawn NPC dengan aktivitas random
+        for i in range(8):
+            self.npcs.append({
+                'x': random.randint(-300, 300),
+                'y': random.randint(100, 1500),
+                'state': random.choice(['walking', 'standing', 'shopping']),
+                'dir': random.choice([-1, 1]),
+                'timer': random.randint(50, 200)
+            })
+            
+        # Spawn Kendaraan di sepanjang jalan
+        for i in range(4):
+            self.vehicles.append({
+                'x': random.choice([-80, 80]),
+                'y': random.randint(300, 1200),
+                'type': random.choice(['Sedan', 'SUV', 'Sport Car']),
+                'color': (random.random(), random.random(), random.random(), 1)
+            })
 
     def update(self, dt):
-        dt = min(dt, 0.05)
-        speed = 8.0 if self.sprinting else 4.5
-
-        # Input is camera-relative; camera orbit stays independent of player facing.
-        heading = self.camera_yaw
-        dx = math.sin(heading) * self.move_y + math.cos(heading) * self.move_x
-        dy = math.cos(heading) * self.move_y - math.sin(heading) * self.move_x
-        mag = math.hypot(dx, dy)
-        if mag > 1:
-            dx, dy = dx / mag, dy / mag
-
-        if mag > JOYSTICK_DEADZONE:
-            nx = self.px + dx * speed * dt
-            ny = self.py + dy * speed * dt
-            if self.clear_position(nx, self.py):
-                self.px = nx
-            if self.clear_position(self.px, ny):
-                self.py = ny
-            self.player_yaw = math.atan2(dx, dy)
-
+        # Perbarui posisi pemain berdasarkan input tombol
+        if self.in_vehicle:
+            self.speed_kmh = 80 if self.speed_kmh == 0 else self.speed_kmh
+            self.player_x += self.steering * 4
+            self.player_y += self.speed_kmh / 10
+        else:
+            spd = self.player_speed * 1.8 if self.is_running else self.player_speed
+            self.player_y += self.move_dir * spd
+            
+        # Logika Fisika Lompat
         if self.is_jumping:
-            self.jump_time += dt
-            if self.jump_time >= self.jump_duration:
+            self.jump_offset += self.jump_vel
+            self.jump_vel -= 0.8
+            if self.jump_offset <= 0:
+                self.jump_offset = 0
                 self.is_jumping = False
-                self.jump_time = 0.0
 
-        for projectile in self.projectiles:
-            projectile["x"] += projectile["vx"] * dt
-            projectile["y"] += projectile["vy"] * dt
-            projectile["life"] -= dt
-        self.projectiles = [p for p in self.projectiles if p["life"] > 0]
-        self.shot_flash = max(0.0, self.shot_flash - dt)
-        self.message_time = max(0.0, self.message_time - dt)
+        # Perbarui Aktivitas NPC
+        for npc in self.npcs:
+            npc['timer'] -= 1
+            if npc['timer'] <= 0:
+                npc['state'] = random.choice(['walking', 'standing', 'shopping'])
+                npc['dir'] = random.choice([-1, 1])
+                npc['timer'] = random.randint(100, 300)
+            if npc['state'] == 'walking':
+                npc['x'] += npc['dir'] * 0.5
 
-        self.draw_world()
+        self.redraw()
 
-    def clear_position(self, x, y):
-        # Player stays in the road + sidewalk corridor for this first prototype.
-        if abs(x) > 4.75:
-            return False
-        for obj in self.objects:
-            if obj["kind"] != "building":
-                continue
-            if (abs(x - obj["x"]) < obj["w"] / 2 + 0.38 and
-                abs(y - obj["y"]) < obj["d"] / 2 + 0.38):
-                return False
-        return True
-
-    def draw_world(self):
+    def redraw(self):
         self.canvas.clear()
         with self.canvas:
-            Color(0.43, 0.70, 0.86)
-            Rectangle(pos=self.pos, size=self.size)
+            # --- Lingkungan & Latar Belakang Realistis ---
+            # Langit
+            Color(0.35, 0.55, 0.75, 1)
+            Rectangle(pos=(0, self.height*0.4), size=(self.width, self.height*0.6))
+            
+            # Matahari
+            Color(1, 0.95, 0.8, 1)
+            Ellipse(pos=(self.width - 120, self.height - 120), size=(80, 80))
 
-            self.draw_ground_and_road()
+            # Tanah / Rumput
+            Color(0.22, 0.45, 0.22, 1)
+            Rectangle(pos=(0, 0), size=(self.width, self.height*0.4))
 
-            visible = []
-            for obj in self.objects:
-                dist = math.hypot(obj["x"] - self.px, obj["y"] - self.py)
-                if dist < VIEW_DISTANCE:
-                    visible.append((dist, obj))
-            visible.sort(key=lambda item: item[0], reverse=True)
-            for _, obj in visible:
-                for vertices, color in self.box_faces(obj):
-                    self.draw_face(vertices, color)
+            # Jalan Raya Perspektif 3D
+            Color(0.2, 0.2, 0.2, 1)
+            center_x = self.width / 2 + self.player_x
+            road_bottom_w = 300
+            road_top_w = 80
+            road_h = self.height * 0.4
+            
+            Line(points=[center_x - road_bottom_w/2, 0, center_x - road_top_w/2, road_h, 
+                         center_x + road_top_w/2, road_h, center_x + road_bottom_w/2, 0], width=2)
+            
+            # Garis Tengah Jalan
+            Color(1, 1, 1, 0.8)
+            for i in range(10):
+                y_pos = i * (road_h / 10)
+                w_factor = 1 - (y_pos / road_h) * 0.7
+                Line(points=[center_x, y_pos, center_x, y_pos + 15 * w_factor], width=2)
 
-            for p in self.projectiles:
-                q = self.project(p["x"], p["y"], 1.0)
-                if q:
-                    Color(1.0, 0.75, 0.12, min(1, p["life"] * 2))
-                    Ellipse(pos=(q[0]-dp(3), q[1]-dp(3)), size=(dp(6), dp(6)))
+            # --- Render Kendaraan ---
+            for v in self.vehicles:
+                v_screen_x = center_x + v['x'] * (1 - v['y']/2000)
+                v_screen_y = (v['y'] / 2000) * road_h
+                Color(*v['color'])
+                Rectangle(pos=(v_screen_x - 15, v_screen_y, 30, 18))
 
-            self.draw_player()
+            # --- Render NPC ---
+            for npc in self.npcs:
+                npc_screen_x = center_x + npc['x'] * (1 - npc['y']/2000)
+                npc_screen_y = (npc['y'] / 2000) * road_h
+                Color(0.8, 0.6, 0.4, 1)
+                Ellipse(pos=(npc_screen_x - 6, npc_screen_y + 10 + self.jump_offset, 12, 12))
+                Color(0.2, 0.3, 0.7, 1)
+                Rectangle(pos=(npc_screen_x - 5, npc_screen_y + self.jump_offset, 10, 12))
 
-            # Joystick visual.
-            if self.left_touch is not None:
-                jx, jy = self.joy_center
-            else:
-                jx, jy = self.x + dp(76), self.y + dp(76)
-            Color(1, 1, 1, 0.19)
-            Ellipse(pos=(jx-dp(42), jy-dp(42)), size=(dp(84), dp(84)))
-            kx, ky = self.joy_pos if self.left_touch is not None else (jx, jy)
-            Color(1, 1, 1, 0.48)
-            Ellipse(pos=(kx-dp(16), ky-dp(16)), size=(dp(32), dp(32)))
+            # --- Render Pemain (Karakter Utama) ---
+            p_x = self.width / 2 - 12
+            p_y = 20 + self.jump_offset
+            Color(0.9, 0.7, 0.5, 1)
+            Ellipse(pos=(p_x + 4, p_y + 24, 16, 16))
+            Color(0.1, 0.3, 0.8, 1)
+            Rectangle(pos=(p_x, p_y + 8, 24, 18))
+            Color(0.2, 0.2, 0.2, 1)
+            Rectangle(pos=(p_x + 3, p_y, 18, 10))
 
-
-class NusantaraApp(App):
+class GTAKotaNusantaraApp(App):
     def build(self):
-        Window.clearcolor = (0.43, 0.70, 0.86, 1)
         root = FloatLayout()
-        self.world = World3D(size_hint=(1, 1))
-        root.add_widget(self.world)
+        
+        self.game_world = GameWorld()
+        root.add_widget(self.game_world)
+        
+        # --- UI Sesuai Konsep Kertas ---
+        
+        # 1. Kiri Atas: Map, Darah, Uang
+        ui_top_left = FloatLayout(size_hint=(None, None), size=(300, 100), pos=(10, 500))
+        with ui_top_left.canvas:
+            Color(0, 0, 0, 0.5)
+            Rectangle(pos=(0, 0), size=(300, 100))
+            
+        self.map_lbl = Label(text="[MAP KOTA]", font_size='12sp', pos=(10, 40), size_hint=(None, None), size=(80, 50))
+        ui_top_left.add_widget(self.map_lbl)
+        
+        self.health_lbl = Label(text="DARAH: 100%", font_size='13sp', bold=True, pos=(100, 60), size_hint=(None, None), size=(180, 30))
+        self.money_lbl = Label(text="$ 50,000", font_size='15sp', color=(0.2, 1, 0.2, 1), bold=True, pos=(100, 20), size_hint=(None, None), size=(180, 30))
+        ui_top_left.add_widget(self.health_lbl)
+        ui_top_left.add_widget(self.money_lbl)
+        root.add_widget(ui_top_left)
 
-        self.add_label(root, "[b]KOTA NUSANTARA[/b]  [size=11]PROTOTYPE 0.3[/size]",
-                       {"x": 0.025, "top": 0.98}, (dp(300), dp(42)), "left")
-        self.status = self.add_label(root, "KECEPATAN: 0 km/jam",
-                       {"right": 0.98, "top": 0.98}, (dp(230), dp(40)), "right")
+        # 2. Kanan Atas: Pengaturan & Kecepatan
+        self.settings_btn = Button(text="⚙️", size_hint=(None, None), size=(50, 50), pos=(730, 530), background_color=(0.2, 0.2, 0.2, 0.8))
+        root.add_widget(self.settings_btn)
+        
+        self.speed_lbl = Label(text="KECEPATAN: 0 km/jam", font_size='16sp', bold=True, pos=(500, 540), size_hint=(None, None), size=(200, 30))
+        root.add_widget(self.speed_lbl)
 
-        self.add_button(root, "LARI", {"right": 0.96, "y": 0.12},
-                        (dp(86), dp(54)),
-                        lambda *_: setattr(self.world, "sprinting", True),
-                        lambda *_: setattr(self.world, "sprinting", False))
-        self.add_button(root, "LOMPAT", {"right": 0.96, "y": 0.29},
-                        (dp(86), dp(54)),
-                        lambda *_: self.world.jump())
-        self.add_button(root, "SENJATA", {"right": 0.96, "y": 0.46},
-                        (dp(86), dp(54)),
-                        lambda *_: self.world.fire_weapon())
-        self.add_button(root, "AKSI", {"right": 0.96, "y": 0.63},
-                        (dp(86), dp(54)),
-                        lambda *_: self.world.interact())
+        # 3. Kiri Bawah: Tombol Gerak (D-Pad)
+        joystick_layout = FloatLayout(size_hint=(None, None), size=(140, 140), pos=(20, 20))
+        with joystick_layout.canvas:
+            Color(1, 1, 1, 0.2)
+            Ellipse(pos=(0, 0), size=(140, 140))
+            
+        btn_up = Button(text="▲", size_hint=(None, None), size=(45, 45), pos=(47, 90), background_color=(0.3, 0.3, 0.3, 0.8))
+        btn_up.bind(press=lambda x: setattr(self.game_world, 'move_dir', 1), release=lambda x: setattr(self.game_world, 'move_dir', 0))
+        
+        btn_down = Button(text="▼", size_hint=(None, None), size=(45, 45), pos=(47, 5), background_color=(0.3, 0.3, 0.3, 0.8))
+        btn_down.bind(press=lambda x: setattr(self.game_world, 'move_dir', -1), release=lambda x: setattr(self.game_world, 'move_dir', 0))
+        
+        joystick_layout.add_widget(btn_up)
+        joystick_layout.add_widget(btn_down)
+        root.add_widget(joystick_layout)
 
-        self.message = self.add_label(root, "", {"center_x": 0.5, "y": 0.12},
-                                      (dp(440), dp(40)), "center")
-        Clock.schedule_interval(self.update_hud, 0.15)
+        # 4. Kanan Bawah: Tombol Aksi (Senjata, Lompat, Kendaraan, Lari, Tembak)
+        self.right_actions_layout = FloatLayout(size_hint=(None, None), size=(260, 200), pos=(520, 20))
+        
+        self.btn_weapon = Button(text="SENJATA", size_hint=(None, None), size=(75, 45), pos=(90, 140))
+        self.btn_jump = Button(text="LOMPAT", size_hint=(None, None), size=(75, 45), pos=(10, 95))
+        self.btn_drive = Button(text="KENDARAAN", size_hint=(None, None), size=(90, 45), pos=(90, 95))
+        self.btn_sprint = Button(text="LARI", size_hint=(None, None), size=(75, 45), pos=(185, 95))
+        self.btn_shoot = Button(text="TEMBAK", size_hint=(None, None), size=(85, 65), pos=(175, 20))
+        
+        self.btn_jump.bind(on_press=self.player_jump)
+        self.btn_sprint.bind(press=lambda x: setattr(self.game_world, 'is_running', True), release=lambda x: setattr(self.game_world, 'is_running', False))
+        self.btn_drive.bind(on_press=self.toggle_driving_mode)
+        self.btn_weapon.bind(on_press=self.cycle_weapon)
+        
+        self.right_actions_layout.add_widget(self.btn_weapon)
+        self.right_actions_layout.add_widget(self.btn_jump)
+        self.right_actions_layout.add_widget(self.btn_drive)
+        self.right_actions_layout.add_widget(self.btn_sprint)
+        self.right_actions_layout.add_widget(self.btn_shoot)
+        
+        root.add_widget(self.right_actions_layout)
+
+        Clock.schedule_interval(self.game_world.update, 1.0 / 60.0)
+        Clock.schedule_interval(self.update_ui, 0.1)
+
         return root
 
-    def add_label(self, root, text, pos_hint, size, align):
-        label = Label(
-            text=text, markup=True, size_hint=(None, None),
-            size=size, pos_hint=pos_hint, halign=align, valign="middle",
-            color=(1, 1, 1, 1)
-        )
-        label.bind(size=lambda instance, value: setattr(instance, "text_size", value))
-        root.add_widget(label)
-        return label
+    def player_jump(self, instance):
+        if not self.game_world.is_jumping:
+            self.game_world.is_jumping = True
+            self.game_world.jump_vel = 12
 
-    def add_button(self, root, text, pos_hint, size, on_press, on_release=None):
-        button = Button(
-            text=text, size_hint=(None, None), size=size, pos_hint=pos_hint,
-            background_normal="", background_down="",
-            background_color=(0.05, 0.19, 0.31, 0.94),
-            color=(1, 1, 1, 1), font_size=dp(13)
-        )
-        button.bind(on_press=on_press)
-        if on_release:
-            button.bind(on_release=on_release)
-        root.add_widget(button)
-        return button
+    def cycle_weapon(self, instance):
+        self.btn_weapon.text = "PISTOL" if self.btn_weapon.text == "SENJATA" else ("RIFLE" if self.btn_weapon.text == "PISTOL" else "SENJATA")
 
-    def update_hud(self, dt):
-        w = self.world
-        strength = min(1.0, math.hypot(w.move_x, w.move_y))
-        speed = (8.0 if w.sprinting else 4.5) * strength
-        self.status.text = f"KECEPATAN: {int(speed * 3.6)} km/jam"
-        self.message.text = w.action_message if w.message_time > 0 else ""
+    def toggle_driving_mode(self, instance):
+        self.game_world.in_vehicle = not self.game_world.in_vehicle
+        self.right_actions_layout.clear_widgets()
+        
+        if self.game_world.in_vehicle:
+            # Mode Mengemudi: Tombol kanan berubah jadi panah kiri/kanan
+            self.btn_steer_left = Button(text="◀ KIRI", size_hint=(None, None), size=(100, 60), pos=(20, 50))
+            self.btn_steer_left.bind(press=lambda x: setattr(self.game_world, 'steering', -1), release=lambda x: setattr(self.game_world, 'steering', 0))
+            
+            self.btn_steer_right = Button(text="KANAN ▶", size_hint=(None, None), size=(100, 60), pos=(140, 50))
+            self.btn_steer_right.bind(press=lambda x: setattr(self.game_world, 'steering', 1), release=lambda x: setattr(self.game_world, 'steering', 0))
+            
+            self.btn_exit_car = Button(text="KELUAR KENDARAAN", size_hint=(None, None), size=(220, 45), pos=(20, 130))
+            self.btn_exit_car.bind(on_press=self.toggle_driving_mode)
+            
+            self.right_actions_layout.add_widget(self.btn_steer_left)
+            self.right_actions_layout.add_widget(self.btn_steer_right)
+            self.right_actions_layout.add_widget(self.btn_exit_car)
+            self.btn_drive.text = "KELUAR"
+        else:
+            # Kembali ke Mode Jalan Kaki
+            self.right_actions_layout.add_widget(self.btn_weapon)
+            self.right_actions_layout.add_widget(self.btn_jump)
+            self.right_actions_layout.add_widget(self.btn_drive)
+            self.right_actions_layout.add_widget(self.btn_sprint)
+            self.right_actions_layout.add_widget(self.btn_shoot)
+            self.btn_drive.text = "KENDARAAN"
+            self.game_world.speed_kmh = 0
+            self.game_world.steering = 0
 
+    def update_ui(self, dt):
+        self.speed_lbl.text = f"KECEPATAN: {int(self.game_world.speed_kmh)} km/jam"
 
-if __name__ == "__main__":
-    NusantaraApp().run()
+if __name__ == '__main__':
+    GTAKotaNusantaraApp().run()
